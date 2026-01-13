@@ -27,7 +27,7 @@
    ```
 
 2. **Create GitHub Release:**
-   - Go to: https://github.com/yourusername/ipdigger/releases/new
+   - Go to: https://github.com/kawaiipantsu/ipdigger/releases/new
    - Tag: `v1.2.0`
    - Title: `IP Digger v1.2.0 - WHOIS, Login Detection & Threat Intelligence`
    - Description: Copy contents from `GITHUB_RELEASE_v1.2.0.md`

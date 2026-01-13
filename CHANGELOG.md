@@ -165,6 +165,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GNU Make
 - dpkg-deb (for Debian package creation)
 
-[1.2.0]: https://github.com/yourusername/ipdigger/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/yourusername/ipdigger/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/yourusername/ipdigger/releases/tag/v1.0.0
+[1.2.0]: https://github.com/kawaiipantsu/ipdigger/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/kawaiipantsu/ipdigger/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/kawaiipantsu/ipdigger/releases/tag/v1.0.0

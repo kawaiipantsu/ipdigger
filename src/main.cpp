@@ -16,6 +16,10 @@ void print_usage(const char* program_name) {
     std::cout << "       IP Digger v" << ipdigger::get_version() << "\n";
     std::cout << "  Your swiss armyknife tool for IP addresses\n";
     std::cout << "\n";
+    std::cout << "         by kawaiipantsu\n";
+    std::cout << "    THUGSred Hacking Community\n";
+    std::cout << "       https://thugs.red\n";
+    std::cout << "\n";
     std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n\n";
     std::cout << "Options:\n";
     std::cout << "  --output-json      Output in JSON format\n";
@@ -55,6 +59,10 @@ void print_version() {
     std::cout << "\n";
     std::cout << "       IP Digger v" << ipdigger::get_version() << "\n";
     std::cout << "  Your swiss armyknife tool for IP addresses\n";
+    std::cout << "\n";
+    std::cout << "         by kawaiipantsu\n";
+    std::cout << "    THUGSred Hacking Community\n";
+    std::cout << "       https://thugs.red\n";
     std::cout << "\n";
     std::cout << "A secure log analysis tool for extracting IP addresses\n";
 }

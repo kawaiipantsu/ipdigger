@@ -67,13 +67,13 @@ ipdigger --enrich-geo --enrich-rdns --enrich-whois --enrich-abuseipdb \
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/yourusername/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
 sudo dpkg -i ipdigger_1.2.0_amd64.deb
 ```
 
 ### From Source
 ```bash
-git clone https://github.com/yourusername/ipdigger.git
+git clone https://github.com/kawaiipantsu/ipdigger.git
 cd ipdigger
 git checkout v1.2.0
 make

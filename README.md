@@ -7,6 +7,10 @@
 
        IP Digger v1.2.0
   Your swiss armyknife tool for IP addresses
+
+         by kawaiipantsu
+    THUGSred Hacking Community
+       https://thugs.red
 ```
 
 A secure C++ log analysis tool for extracting and enriching IP addresses from log files.
@@ -28,13 +32,13 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/yourusername/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
 sudo dpkg -i ipdigger_1.2.0_amd64.deb
 ```
 
 ### From Source
 ```bash
-git clone https://github.com/yourusername/ipdigger.git
+git clone https://github.com/kawaiipantsu/ipdigger.git
 cd ipdigger
 make
 sudo make install
@@ -262,6 +266,7 @@ MIT License - See LICENSE file for details
 
 ## Links
 
-- **GitHub**: https://github.com/yourusername/ipdigger
-- **Issues**: https://github.com/yourusername/ipdigger/issues
-- **Releases**: https://github.com/yourusername/ipdigger/releases
+- **GitHub**: https://github.com/kawaiipantsu/ipdigger
+- **Issues**: https://github.com/kawaiipantsu/ipdigger/issues
+- **Releases**: https://github.com/kawaiipantsu/ipdigger/releases
+- **Author**: kawaiipantsu @ [THUGSred Hacking Community](https://thugs.red)
