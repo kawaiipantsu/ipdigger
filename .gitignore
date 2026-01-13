@@ -31,3 +31,11 @@ vgcore.*
 # Generated files
 *.log
 compile_commands.json
+
+# Release files
+GITHUB_RELEASE_*.md
+RELEASE_NOTES_*.md
+RELEASE_INSTRUCTIONS.md
+AUTHOR_INFO.txt
+*_checksums.txt
+*.sha256
