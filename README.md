@@ -1,242 +1,267 @@
 # IPDigger
 
-A secure C++ log analysis tool that extracts IP addresses and timestamps from log files, presenting them in clean ASCII tables.
+```
+     ___________ ____________
+    |           )._______.-'
+    `----------'
+
+       IP Digger v1.2.0
+  Your swiss armyknife tool for IP addresses
+```
+
+A secure C++ log analysis tool for extracting and enriching IP addresses from log files.
 
 ## Features
 
-- **IP Address Extraction**: Automatically detects and extracts both IPv4 and IPv6 addresses
-- **Glob Pattern Support**: Process multiple files using wildcards (`*.log`, `/var/log/*.log`)
-- **Date/Timestamp Parsing**: Supports multiple common log formats:
-  - ISO 8601 / RFC3339: `2024-01-13T12:34:56Z`
-  - Apache/Nginx logs: `[13/Jan/2024:12:34:56 +0000]`
-  - Syslog format: `Jan 13 12:34:56`
-  - Common format: `2024-01-13 12:34:56`
-- **ASCII Table Output**: Clean, formatted tables for easy reading
-- **JSON Output**: Machine-readable JSON format for automation
-- **Statistical Analysis**: Show first seen, last seen, and occurrence count per IP
-- **Security Hardened**: Compiled with modern C++ security flags
-
-## Quick Start
-
-### Build
-```bash
-make
-```
-
-### Basic Usage
-```bash
-# Single file
-./bin/ipdigger /var/log/nginx/access.log
-
-# Multiple files with wildcards
-./bin/ipdigger "/var/log/*.log"
-./bin/ipdigger /var/log/nginx/*.log
-```
-
-### Show Statistics
-```bash
-./bin/ipdigger --stats /var/log/auth.log
-./bin/ipdigger --stats "/var/log/*.log"
-```
+- 🔍 **IP Extraction**: IPv4 and IPv6 from any log format
+- 📊 **Statistics**: Count, first/last seen per IP
+- 🌍 **GeoIP**: MaxMind country/city/ASN data
+- 🔐 **Login Detection**: Track authentication success/failures
+- 🛡️ **Threat Intel**: AbuseIPDB abuse scoring
+- 📋 **WHOIS**: Network ownership and abuse contacts
+- 🌐 **Reverse DNS**: Hostname resolution
+- 🎯 **Filtering**: Private IPs, top N IPs
+- 📦 **Formats**: ASCII tables or JSON output
+- 🔒 **Secure**: Full security hardening (PIE, RELRO, stack protection)
 
 ## Installation
 
-### Install System-wide
+### Debian/Ubuntu
 ```bash
+wget https://github.com/yourusername/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
+sudo dpkg -i ipdigger_1.2.0_amd64.deb
+```
+
+### From Source
+```bash
+git clone https://github.com/yourusername/ipdigger.git
+cd ipdigger
+make
 sudo make install
 ```
 
-This installs `ipdigger` to `/usr/local/bin`.
+### Requirements
+- GCC 7+ or Clang 5+ (C++17)
+- libcurl4-openssl-dev
+- libssl-dev
+- libmaxminddb-dev
+- zlib1g-dev
 
-### Create Debian Package
+## Quick Start
+
 ```bash
-make deb
-sudo dpkg -i ipdigger_1.0.0_amd64.deb
+# Basic usage
+ipdigger /var/log/nginx/access.log
+
+# Multiple files
+ipdigger "/var/log/*.log"
+
+# With enrichment
+ipdigger --enrich-geo --enrich-whois /var/log/auth.log
+
+# Find top attackers
+ipdigger --detect-login --top-20 --no-private /var/log/auth.log
+
+# Full analysis
+ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
+         --detect-login --top-10 --output-json /var/log/auth.log
 ```
 
-### Uninstall
-```bash
-sudo make uninstall
-# or if installed via deb:
-sudo dpkg -r ipdigger
+## Usage
+
+```
+Usage: ipdigger [OPTIONS] <filename>
+
+Options:
+  --output-json      Output in JSON format
+
+Enrichment:
+  --enrich-geo       Enrich with geolocation data (MaxMind)
+  --enrich-rdns      Enrich with reverse DNS lookups
+  --enrich-abuseipdb Enrich with AbuseIPDB threat intelligence
+  --enrich-whois     Enrich with WHOIS data (netname, abuse, CIDR, admin)
+
+Analysis:
+  --detect-login     Detect and track login attempts (success/failed)
+
+Filtering:
+  --no-private       Exclude private/local network addresses
+  --top-10           Show only top 10 IPs by count
+  --top-20           Show only top 20 IPs by count
+  --top-50           Show only top 50 IPs by count
+  --top-100          Show only top 100 IPs by count
+
+Info:
+  --help             Display help message
+  --version          Display version information
 ```
 
-## Usage Examples
+## Examples
 
-### Normal Mode
-Shows unique IP addresses (first occurrence) with their line numbers and timestamps:
-
+### Basic IP Extraction
 ```bash
-$ ipdigger sample.log
--------------------------------------------------------------------------
-| Line | IP Address                              | Date/Time            |
--------------------------------------------------------------------------
-|    1 | 192.168.1.100                           | 2024-01-13 08:15:23  |
-|    2 | 10.0.0.50                               | 2024-01-13 08:16:45  |
-|    3 | 203.0.113.45                            | 2024-01-13 08:17:12  |
--------------------------------------------------------------------------
-Total: 3 unique IP address(es) found
+ipdigger /var/log/nginx/access.log
+```
+```
+| IP Address      | First Seen          | Last Seen           | Count |
+|----------------|---------------------|---------------------|-------|
+| 192.168.1.100  | 2024-01-13 08:15:23 | 2024-01-13 08:25:30 |     4 |
+| 203.0.113.45   | 2024-01-13 08:17:12 | 2024-01-13 08:17:12 |     1 |
 ```
 
-### Statistics Mode
-Shows aggregated statistics for each unique IP address:
-
+### Login Detection
 ```bash
-$ ipdigger --stats sample.log
-------------------------------------------------------------------------------------------------
-| IP Address                              | First Seen           | Last Seen           | Count |
-------------------------------------------------------------------------------------------------
-| 192.168.1.100                           | 2024-01-13 08:15:23  | 2024-01-13 08:25:30 |     4 |
-| 10.0.0.50                               | 2024-01-13 08:16:45  | 2024-01-13T08:22:00 |     2 |
-| 203.0.113.45                            | 2024-01-13 08:17:12  | 2024-01-13 08:17:12 |     1 |
-------------------------------------------------------------------------------------------------
-Total: 3 unique IP address(es)
+ipdigger --detect-login /var/log/auth.log
+```
+```
+| IP Address      | Count | Login        |
+|----------------|-------|-------------|
+| 203.0.113.45   |     8 | OK:0 F:8    |
+| 8.8.8.8        |     3 | OK:3 F:0    |
+```
+
+### WHOIS Enrichment
+```bash
+ipdigger --enrich-whois /var/log/auth.log
+```
+```
+| IP Address   | netname    | abuse                    | cidr                |
+|-------------|------------|--------------------------|---------------------|
+| 8.8.8.8     | GOGL       | network-abuse@google.com | 8.8.8.0 - 8.8.8.255 |
+| 1.1.1.1     | APNIC-LABS | helpdesk@apnic.net       | 1.1.1.0 - 1.1.1.255 |
+```
+
+### GeoIP + Threat Intelligence
+```bash
+ipdigger --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log
+```
+```
+| IP Address   | Country | City      | abuseScore | totalReports |
+|-------------|---------|-----------|-----------|-------------|
+| 45.67.89.12 | CN      | Shanghai  | 95        | 247         |
+| 23.45.67.89 | RU      | Moscow    | 87        | 156         |
 ```
 
 ### JSON Output
-Both normal and statistics modes can output in JSON format:
-
 ```bash
-$ ipdigger --output-json sample.log
-{
-  "ip_addresses": [
-    {
-      "ip_address": "192.168.1.100",
-      "line_number": 1,
-      "date": "2024-01-13 08:15:23",
-      "timestamp": 1705130123
-    },
-    {
-      "ip_address": "10.0.0.50",
-      "line_number": 2,
-      "date": "2024-01-13 08:16:45",
-      "timestamp": 1705130205
-    }
-  ],
-  "total": 2
-}
-
-$ ipdigger --stats --output-json sample.log
+ipdigger --enrich-whois --output-json /var/log/auth.log
+```
+```json
 {
   "statistics": [
     {
-      "ip_address": "192.168.1.100",
-      "first_seen": "2024-01-13 08:15:23",
-      "last_seen": "2024-01-13 08:25:30",
-      "count": 4,
-      "first_timestamp": 1705130123,
-      "last_timestamp": 1705130730
+      "ip_address": "8.8.8.8",
+      "first_seen": "2024-01-13 10:00:00",
+      "last_seen": "2024-01-13 10:03:00",
+      "count": 2,
+      "first_timestamp": 1705136400,
+      "last_timestamp": 1705136580,
+      "login_success_count": 2,
+      "login_failed_count": 0,
+      "enrichment": {
+        "netname": "GOGL",
+        "abuse": "network-abuse@google.com",
+        "cidr": "8.8.8.0 - 8.8.8.255"
+      }
     }
   ],
   "total": 1
 }
 ```
 
-## Command Line Options
+## Supported Log Formats
 
+IPDigger automatically detects timestamps in various formats:
+
+| Format          | Example                           | Common In               |
+|----------------|-----------------------------------|------------------------|
+| ISO 8601       | `2024-01-13T12:34:56Z`           | Application logs       |
+| Common         | `2024-01-13 12:34:56`            | Generic logs           |
+| Apache/Nginx   | `[13/Jan/2024:12:34:56 +0000]`   | Web server access logs |
+| Syslog         | `Jan 13 12:34:56`                | System logs, auth.log  |
+| Date only      | `2024-01-13`                     | Simple logs            |
+
+**Supported IP formats:**
+- IPv4: `192.168.1.1`, `8.8.8.8`
+- IPv6: `2001:db8::1`, `::1`, `fe80::1`
+
+**Works with any log file containing IP addresses:**
+- `/var/log/nginx/access.log`
+- `/var/log/apache2/access.log`
+- `/var/log/auth.log`
+- `/var/log/syslog`
+- Custom application logs
+- Firewall logs
+- VPN logs
+
+## Configuration
+
+Create `~/.ipdigger/settings.conf` for API keys and caching:
+
+```ini
+[output]
+default_json = false
+
+[enrichment]
+parallel_requests = 10
+rdns_threads = 4
+
+[cache]
+enabled = true
+cache_dir = ~/.ipdigger/cache
+cache_ttl_hours = 24
+
+[maxmind]
+account_id = YOUR_ACCOUNT_ID
+license_key = YOUR_LICENSE_KEY
+db_dir = ~/.ipdigger/maxmind
+
+[abuseipdb]
+api_key = YOUR_API_KEY
 ```
-Usage: ipdigger [OPTIONS] <filename>
 
-Options:
-  --stats        Show statistical summary (first seen, last seen, count)
-  --output-json  Output in JSON format
-  --help         Display help message
-  --version      Display version information
+## Use Cases
 
-Examples:
-  ipdigger /var/log/nginx/access.log
-  ipdigger --stats /var/log/auth.log
-  ipdigger "/var/log/*.log"
-  ipdigger --output-json "/var/log/*.log"
-  ipdigger --stats --output-json "/var/log/nginx/*.log"
-
-Note: Quote glob patterns to prevent shell expansion
+**Security Analysis:**
+```bash
+# Find top attackers with threat intel
+ipdigger --detect-login --enrich-abuseipdb --top-20 --no-private /var/log/auth.log
 ```
 
-## Security Features
-
-IPDigger is compiled with comprehensive security hardening:
-
-- **Stack Protection**: `-fstack-protector-strong`, `-fstack-clash-protection`
-- **Position Independent Executable**: `-fPIE`, `-pie`
-- **Fortify Source**: `-D_FORTIFY_SOURCE=2`
-- **Full RELRO**: `-z,relro,-z,now` (all relocations read-only at startup)
-- **Non-executable Stack**: `-z,noexecstack`
-- **Control Flow Protection**: `-fcf-protection`
-- **Format String Protection**: `-Wformat -Wformat-security`
-- **Strict Warnings**: All warnings treated as errors
-
-## Requirements
-
-- GCC 7+ or Clang 5+ (with C++17 support)
-- Make
-- dpkg-deb (for Debian package creation)
-
-## Project Structure
-
+**Abuse Reporting:**
+```bash
+# Get abuse contacts for suspicious IPs
+ipdigger --enrich-whois --detect-login --top-10 /var/log/auth.log
 ```
-.
-├── Makefile           # Build system with security flags
-├── include/           # Header files
-│   └── ipdigger.h
-├── src/               # Source files
-│   ├── main.cpp       # CLI interface
-│   └── ipdigger.cpp   # Core functionality
-├── tests/             # Test suite
-│   └── test_main.cpp
-└── sample.log         # Example log file
+
+**Geographic Analysis:**
+```bash
+# Map traffic sources
+ipdigger --enrich-geo --output-json /var/log/nginx/access.log > traffic.json
+```
+
+**Comprehensive Investigation:**
+```bash
+# Full enrichment for incident response
+ipdigger --enrich-geo --enrich-rdns --enrich-whois --enrich-abuseipdb \
+         --detect-login --output-json /var/log/auth.log > report.json
 ```
 
 ## Development
 
-### Build Commands
 ```bash
-make              # Build project
-make test         # Run test suite
-make clean        # Remove build artifacts
-make help         # Show all targets
-make debug        # Show build configuration
+make              # Build
+make test         # Run tests
+make clean        # Clean build artifacts
+make deb          # Create Debian package
 ```
-
-### Running Tests
-```bash
-make test
-```
-
-The test suite validates:
-- IPv4 and IPv6 address extraction
-- Date/timestamp parsing across multiple formats
-- File parsing and entry creation
-- Statistical aggregation
-- Table formatting
-
-## Supported Log Formats
-
-IPDigger automatically detects and parses various log formats:
-
-- **Nginx/Apache Access Logs**: `[13/Jan/2024:12:34:56 +0000] 192.168.1.1 GET /`
-- **Syslog**: `Jan 13 12:34:56 server sshd[1234]: Connection from 192.168.1.1`
-- **Application Logs**: `2024-01-13 12:34:56 INFO: Request from 192.168.1.1`
-- **ISO 8601**: `2024-01-13T12:34:56Z API call from 192.168.1.1`
-
-## Use Cases
-
-- **Security Analysis**: Identify suspicious IP addresses across multiple log files
-- **Traffic Analysis**: See which IPs access your services most frequently
-- **Intrusion Detection**: Track failed login attempts by IP across all servers
-- **Log Parsing**: Extract structured data from unstructured logs
-- **Compliance**: Generate reports of access patterns
-- **Multi-Server Analysis**: Process logs from multiple servers using wildcards
-- **Automated Monitoring**: Use JSON output for integration with monitoring tools
 
 ## License
 
-[Add your license here]
+MIT License - See LICENSE file for details
 
-## Contributing
+## Links
 
-Contributions welcome! Please ensure:
-- Code follows C++ Core Guidelines
-- All tests pass (`make test`)
-- Security flags remain enabled
-- New features include tests
+- **GitHub**: https://github.com/yourusername/ipdigger
+- **Issues**: https://github.com/yourusername/ipdigger/issues
+- **Releases**: https://github.com/yourusername/ipdigger/releases
