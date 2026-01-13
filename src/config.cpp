@@ -31,8 +31,12 @@ Config::Config() {
 
     // MaxMind settings
     maxmind_db_dir = get_config_directory() + "/maxmind";
+    maxmind_account_id = "";
     maxmind_license_key = "";
     maxmind_auto_download = true;
+
+    // AbuseIPDB settings
+    abuseipdb_api_key = "";
 
     config_file_path = get_config_file_path();
 }
@@ -93,13 +97,9 @@ bool create_example_config(const std::string& config_path) {
     file << "# This file was automatically created. Configure your API keys below.\n\n";
     file << "[output]\n";
     file << "# Default output settings (can be overridden by CLI flags)\n";
-    file << "default_enrich = false        # Enable --enrich by default\n";
     file << "default_json = false          # Enable --output-json by default\n\n";
     file << "[enrichment]\n";
-    file << "# Enrichment feature toggles\n";
-    file << "enrich_geo = true            # Enable geolocation data (MaxMind)\n";
-    file << "enrich_threat = true         # Enable threat intelligence\n";
-    file << "enrich_rdns = true           # Enable reverse DNS lookup\n";
+    file << "# Enrichment settings\n";
     file << "parallel_requests = 3        # Max concurrent API requests\n";
     file << "rdns_threads = 4             # Number of threads for reverse DNS lookups\n\n";
     file << "[cache]\n";
@@ -108,38 +108,16 @@ bool create_example_config(const std::string& config_path) {
     file << "cache_ttl_hours = 24         # Cache validity period\n";
     file << "cache_enabled = true         # Enable/disable caching\n\n";
     file << "[maxmind]\n";
-    file << "# MaxMind GeoIP database settings\n";
+    file << "# MaxMind GeoIP database settings (for --enrich-geo)\n";
+    file << "# Get free GeoLite2 account at https://www.maxmind.com/en/geolite2/signup\n";
     file << "db_dir = ~/.ipdigger/maxmind\n";
-    file << "license_key =                # Get free key at https://www.maxmind.com/en/geolite2/signup\n";
+    file << "account_id =                 # Your MaxMind Account ID (for auto-download)\n";
+    file << "license_key =                # Your MaxMind License Key (for auto-download)\n";
     file << "auto_download = true         # Auto-download databases if missing\n\n";
-    file << "[api_providers]\n";
-    file << "# Generic API provider configuration\n";
-    file << "# Format: provider<N>_<attribute> = value\n";
-    file << "# Supported types: geo, threat\n\n";
-    file << "# Example: IPInfo.io for geolocation\n";
-    file << "# Get a free API key at https://ipinfo.io/signup (50k requests/month free)\n";
-    file << "provider1_name = IPInfo\n";
-    file << "provider1_type = geo\n";
-    file << "provider1_url = https://ipinfo.io/{ip}/json?token={api_key}\n";
-    file << "provider1_api_key = YOUR_IPINFO_API_KEY_HERE\n";
-    file << "provider1_enabled = false    # Set to true after adding your API key\n";
-    file << "provider1_timeout_ms = 5000\n";
-    file << "provider1_rate_limit_ms = 100\n\n";
-    file << "# Example: AbuseIPDB for threat intelligence\n";
-    file << "# Get a free API key at https://www.abuseipdb.com/api (1k requests/day free)\n";
-    file << "provider2_name = AbuseIPDB\n";
-    file << "provider2_type = threat\n";
-    file << "provider2_url = https://api.abuseipdb.com/api/v2/check?ipAddress={ip}\n";
-    file << "provider2_api_key = YOUR_ABUSEIPDB_API_KEY_HERE\n";
-    file << "provider2_enabled = false    # Set to true after adding your API key\n";
-    file << "provider2_timeout_ms = 5000\n";
-    file << "provider2_rate_limit_ms = 1000\n\n";
-    file << "# You can add more providers by incrementing the number\n";
-    file << "# provider3_name = YourProvider\n";
-    file << "# provider3_type = geo\n";
-    file << "# provider3_url = https://api.yourprovider.com/{ip}?key={api_key}\n";
-    file << "# provider3_api_key = YOUR_KEY_HERE\n";
-    file << "# provider3_enabled = true\n";
+    file << "[abuseipdb]\n";
+    file << "# AbuseIPDB threat intelligence settings (for --enrich-abuseipdb)\n";
+    file << "# Get free API key at https://www.abuseipdb.com/api (1000 requests/day)\n";
+    file << "api_key =                    # Required for --enrich-abuseipdb\n";
 
     file.close();
 
@@ -360,11 +338,22 @@ Config load_config_from_file(const std::string& config_path) {
             if (maxmind.count("db_dir")) {
                 config.maxmind_db_dir = expand_home_dir(maxmind["db_dir"]);
             }
+            if (maxmind.count("account_id")) {
+                config.maxmind_account_id = maxmind["account_id"];
+            }
             if (maxmind.count("license_key")) {
                 config.maxmind_license_key = maxmind["license_key"];
             }
             if (maxmind.count("auto_download")) {
                 config.maxmind_auto_download = parse_bool(maxmind["auto_download"]);
+            }
+        }
+
+        // Parse [abuseipdb] section
+        if (ini_data.count("abuseipdb")) {
+            auto& abuseipdb = ini_data["abuseipdb"];
+            if (abuseipdb.count("api_key")) {
+                config.abuseipdb_api_key = abuseipdb["api_key"];
             }
         }
 

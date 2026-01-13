@@ -18,26 +18,30 @@ void print_usage(const char* program_name) {
     std::cout << "\n";
     std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n\n";
     std::cout << "Options:\n";
-    std::cout << "  --output-json  Output in JSON format\n";
-    std::cout << "  --enrich       Enrich IPs with geolocation and threat data (requires config)\n";
-    std::cout << "  --enrich-geo   Enrich IPs with geolocation data (MaxMind)\n";
-    std::cout << "  --enrich-rdns  Enrich IPs with reverse DNS lookups\n";
-    std::cout << "  --no-enrich    Disable enrichment (overrides config default)\n";
-    std::cout << "  --top-10       Show only top 10 IPs by count\n";
-    std::cout << "  --top-20       Show only top 20 IPs by count\n";
-    std::cout << "  --top-50       Show only top 50 IPs by count\n";
-    std::cout << "  --top-100      Show only top 100 IPs by count\n";
-    std::cout << "  --help         Display this help message\n";
-    std::cout << "  --version      Display version information\n\n";
+    std::cout << "  --output-json      Output in JSON format\n";
+    std::cout << "  --enrich-geo       Enrich IPs with geolocation data (MaxMind)\n";
+    std::cout << "  --enrich-rdns      Enrich IPs with reverse DNS lookups\n";
+    std::cout << "  --enrich-abuseipdb Enrich IPs with AbuseIPDB threat intelligence\n";
+    std::cout << "  --enrich-whois     Enrich IPs with WHOIS data (netname, abuse, CIDR, admin)\n";
+    std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
+    std::cout << "  --no-private       Exclude private/local network addresses from output\n";
+    std::cout << "  --top-10           Show only top 10 IPs by count\n";
+    std::cout << "  --top-20           Show only top 20 IPs by count\n";
+    std::cout << "  --top-50           Show only top 50 IPs by count\n";
+    std::cout << "  --top-100          Show only top 100 IPs by count\n";
+    std::cout << "  --help             Display this help message\n";
+    std::cout << "  --version          Display version information\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --no-private /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --enrich-geo /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-rdns /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-whois /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --top-10 --enrich-geo /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --top-20 --enrich-rdns --output-json \"*.log\"\n";
-    std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n";
-    std::cout << "  " << program_name << " --output-json /var/log/auth.log\n\n";
+    std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --top-20 --output-json \"/var/log/*.log\"\n";
+    std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n\n";
     std::cout << "Configuration:\n";
     std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
     std::cout << "  Cache dir:   ~/.ipdigger/cache/\n";
@@ -67,9 +71,12 @@ int main(int argc, char* argv[]) {
 
     // Parse command line arguments (CLI overrides config)
     bool output_json = config.default_json;
-    bool enable_enrich = config.default_enrich;
     bool enable_geo = false;
     bool enable_rdns = false;
+    bool enable_abuseipdb = false;
+    bool enable_whois = false;
+    bool no_private = false;
+    bool detect_login = false;
     size_t top_n = 0;  // 0 means show all
     std::string filename;
 
@@ -84,16 +91,18 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--output-json") {
             output_json = true;
-        } else if (arg == "--enrich") {
-            enable_enrich = true;
         } else if (arg == "--enrich-geo") {
             enable_geo = true;
         } else if (arg == "--enrich-rdns") {
             enable_rdns = true;
-        } else if (arg == "--no-enrich") {
-            enable_enrich = false;
-            enable_geo = false;
-            enable_rdns = false;
+        } else if (arg == "--enrich-abuseipdb") {
+            enable_abuseipdb = true;
+        } else if (arg == "--enrich-whois") {
+            enable_whois = true;
+        } else if (arg == "--no-private") {
+            no_private = true;
+        } else if (arg == "--detect-login") {
+            detect_login = true;
         } else if (arg == "--top-10") {
             top_n = 10;
         } else if (arg == "--top-20") {
@@ -137,10 +146,21 @@ int main(int argc, char* argv[]) {
         std::vector<ipdigger::IPEntry> entries;
         if (files.size() == 1) {
             // Single file - use direct parsing for better error messages
-            entries = ipdigger::parse_file(files[0], show_progress);
+            entries = ipdigger::parse_file(files[0], show_progress, detect_login);
         } else {
             // Multiple files - use multi-file parser with error handling
-            entries = ipdigger::parse_files(files, show_progress);
+            entries = ipdigger::parse_files(files, show_progress, detect_login);
+        }
+
+        // Filter out private IPs if requested
+        if (no_private) {
+            std::vector<ipdigger::IPEntry> filtered_entries;
+            for (const auto& entry : entries) {
+                if (!ipdigger::is_private_ip(entry.ip_address)) {
+                    filtered_entries.push_back(entry);
+                }
+            }
+            entries = filtered_entries;
         }
 
         // Apply top N filtering if requested
@@ -197,16 +217,7 @@ int main(int argc, char* argv[]) {
         auto stats = ipdigger::generate_statistics(entries);
 
         // Enrich statistics if requested
-        if (enable_enrich || enable_geo || enable_rdns) {
-            // Apply enrichments
-            if (enable_enrich && !config.providers.empty()) {
-                if (!output_json) std::cout << "Enriching with API data...\n";
-                ipdigger::enrich_statistics(stats, config);
-            } else if (enable_enrich) {
-                std::cerr << "Warning: --enrich specified but no API providers configured\n";
-                std::cerr << "         Configure providers in " << config.config_file_path << "\n";
-            }
-
+        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois) {
             if (enable_geo) {
                 if (!output_json) std::cout << "Enriching with GeoIP data...\n";
                 ipdigger::enrich_geoip_stats(stats, config);
@@ -214,6 +225,14 @@ int main(int argc, char* argv[]) {
 
             if (enable_rdns) {
                 ipdigger::enrich_rdns_stats(stats, config);
+            }
+
+            if (enable_abuseipdb) {
+                ipdigger::enrich_abuseipdb_stats(stats, config);
+            }
+
+            if (enable_whois) {
+                ipdigger::enrich_whois_stats(stats, config);
             }
         }
 

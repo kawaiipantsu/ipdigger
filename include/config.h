@@ -46,8 +46,12 @@ struct Config {
 
     // MaxMind settings
     std::string maxmind_db_dir;         // MaxMind database directory
+    std::string maxmind_account_id;     // MaxMind account ID for downloads
     std::string maxmind_license_key;    // MaxMind license key for downloads
     bool maxmind_auto_download;         // Auto-download databases if missing
+
+    // AbuseIPDB settings
+    std::string abuseipdb_api_key;      // AbuseIPDB API key
 
     // API providers
     std::vector<APIProvider> providers;

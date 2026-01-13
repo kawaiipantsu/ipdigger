@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <cstring>
 #include <zlib.h>
 #include <tar.h>
@@ -648,10 +649,15 @@ std::map<std::string, std::string> find_maxmind_databases() {
     return databases;
 }
 
-bool download_maxmind_databases(const std::string& license_key, const std::string& db_dir) {
-    if (license_key.empty()) {
-        std::cerr << "Error: MaxMind license key not configured\n";
-        std::cerr << "       Get a free key at https://www.maxmind.com/en/geolite2/signup\n";
+bool download_maxmind_databases(
+    const std::string& account_id,
+    const std::string& license_key,
+    const std::string& db_dir
+) {
+    if (account_id.empty() || license_key.empty()) {
+        std::cerr << "Error: MaxMind account_id and license_key not configured\n";
+        std::cerr << "       Get a free account at https://www.maxmind.com/en/geolite2/signup\n";
+        std::cerr << "       Configure both account_id and license_key in [maxmind] section\n";
         return false;
     }
 
@@ -668,14 +674,16 @@ bool download_maxmind_databases(const std::string& license_key, const std::strin
 
     for (const auto& edition : editions) {
         try {
-            std::string url = "https://download.maxmind.com/app/geoip_download?" +
-                             std::string("edition_id=") + edition +
-                             "&license_key=" + license_key +
-                             "&suffix=tar.gz";
+            // MaxMind requires both account_id and license_key
+            std::string url = "https://download.maxmind.com/geoip/databases/" + edition +
+                             "/download?suffix=tar.gz";
+
+            // Use HTTP Basic Auth with account_id:license_key
+            std::string auth = account_id + ":" + license_key;
 
             std::string tar_file = db_dir + "/" + edition + ".tar.gz";
 
-            // Download using curl
+            // Download using curl with HTTP Basic Auth
             CURL* curl = curl_easy_init();
             if (!curl) continue;
 
@@ -690,6 +698,8 @@ bool download_maxmind_databases(const std::string& license_key, const std::strin
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);  // 5 minutes
+            curl_easy_setopt(curl, CURLOPT_USERPWD, auth.c_str());  // HTTP Basic Auth
+            curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
 
             CURLcode res = curl_easy_perform(curl);
             fclose(fp);
@@ -745,7 +755,7 @@ std::map<std::string, std::string> maxmind_lookup(
     // Extract country code
     if (MMDB_get_value(&lookup_result.entry, &entry_data, "country", "iso_code", NULL) == MMDB_SUCCESS) {
         if (entry_data.has_data && entry_data.type == MMDB_DATA_TYPE_UTF8_STRING) {
-            result["country_code"] = std::string(entry_data.utf8_string, entry_data.data_size);
+            result["cc"] = std::string(entry_data.utf8_string, entry_data.data_size);
         }
     }
 
@@ -786,15 +796,16 @@ void enrich_geoip(std::vector<IPEntry>& entries, const Config& config) {
     auto databases = find_maxmind_databases();
 
     // If no databases found and auto-download enabled, try to download
-    if (databases.empty() && config.maxmind_auto_download && !config.maxmind_license_key.empty()) {
+    if (databases.empty() && config.maxmind_auto_download &&
+        !config.maxmind_account_id.empty() && !config.maxmind_license_key.empty()) {
         std::cerr << "MaxMind databases not found. Attempting download...\n";
-        download_maxmind_databases(config.maxmind_license_key, config.maxmind_db_dir);
+        download_maxmind_databases(config.maxmind_account_id, config.maxmind_license_key, config.maxmind_db_dir);
         databases = find_maxmind_databases();
     }
 
     if (databases.empty()) {
         std::cerr << "Warning: No MaxMind databases found. GeoIP enrichment unavailable.\n";
-        std::cerr << "         Configure license_key in ~/.ipdigger/settings.conf or\n";
+        std::cerr << "         Configure account_id and license_key in ~/.ipdigger/settings.conf or\n";
         std::cerr << "         install databases in /usr/share/GeoIP/\n";
         return;
     }
@@ -854,14 +865,16 @@ void enrich_geoip_stats(std::map<std::string, IPStats>& stats, const Config& con
     auto databases = find_maxmind_databases();
 
     // If no databases found and auto-download enabled, try to download
-    if (databases.empty() && config.maxmind_auto_download && !config.maxmind_license_key.empty()) {
+    if (databases.empty() && config.maxmind_auto_download &&
+        !config.maxmind_account_id.empty() && !config.maxmind_license_key.empty()) {
         std::cerr << "MaxMind databases not found. Attempting download...\n";
-        download_maxmind_databases(config.maxmind_license_key, config.maxmind_db_dir);
+        download_maxmind_databases(config.maxmind_account_id, config.maxmind_license_key, config.maxmind_db_dir);
         databases = find_maxmind_databases();
     }
 
     if (databases.empty()) {
         std::cerr << "Warning: No MaxMind databases found. GeoIP enrichment unavailable.\n";
+        std::cerr << "         Configure account_id and license_key in ~/.ipdigger/settings.conf\n";
         return;
     }
 
@@ -897,6 +910,495 @@ void enrich_geoip_stats(std::map<std::string, IPStats>& stats, const Config& con
                       << e.what() << "\n";
         }
     }
+}
+
+std::string http_get_with_headers(
+    const std::string& url,
+    const std::map<std::string, std::string>& headers,
+    size_t timeout_ms
+) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to initialize CURL");
+    }
+
+    std::string response_data;
+
+    // Set up CURL options
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(timeout_ms));
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "IPDigger/1.1");
+
+    // Add custom headers
+    struct curl_slist* header_list = nullptr;
+    for (const auto& [key, value] : headers) {
+        std::string header = key + ": " + value;
+        header_list = curl_slist_append(header_list, header.c_str());
+    }
+    if (header_list) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    }
+
+    // Perform request
+    CURLcode res = curl_easy_perform(curl);
+
+    // Clean up
+    if (header_list) {
+        curl_slist_free_all(header_list);
+    }
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        throw std::runtime_error(std::string("CURL request failed: ") + curl_easy_strerror(res));
+    }
+
+    return response_data;
+}
+
+std::map<std::string, std::string> abuseipdb_lookup(
+    const std::string& ip_address,
+    const std::string& api_key
+) {
+    std::map<std::string, std::string> result;
+
+    if (api_key.empty()) {
+        return result;
+    }
+
+    try {
+        // Build AbuseIPDB API URL
+        std::string url = "https://api.abuseipdb.com/api/v2/check?ipAddress=" + ip_address + "&maxAgeInDays=90&verbose";
+
+        // Set up headers with API key
+        std::map<std::string, std::string> headers;
+        headers["Key"] = api_key;
+        headers["Accept"] = "application/json";
+
+        // Make request with 10 second timeout
+        std::string response = http_get_with_headers(url, headers, 10000);
+
+        // Parse JSON response
+        auto json_data = nlohmann::json::parse(response);
+
+        // Extract data from response
+        if (json_data.contains("data")) {
+            auto& data = json_data["data"];
+
+            // Extract abuseConfidenceScore
+            if (data.contains("abuseConfidenceScore")) {
+                result["abuseScore"] = std::to_string(data["abuseConfidenceScore"].get<int>());
+            }
+
+            // Extract usageType
+            if (data.contains("usageType") && !data["usageType"].is_null()) {
+                result["usageType"] = data["usageType"].get<std::string>();
+            }
+
+            // Extract totalReports
+            if (data.contains("totalReports")) {
+                result["totalReports"] = std::to_string(data["totalReports"].get<int>());
+            }
+
+            // Extract ISP
+            if (data.contains("isp") && !data["isp"].is_null()) {
+                result["isp"] = data["isp"].get<std::string>();
+            }
+        }
+    } catch (const std::exception& e) {
+        // Silently fail - don't pollute output
+        // Errors will be logged in the calling function
+    }
+
+    return result;
+}
+
+void enrich_abuseipdb_stats(std::map<std::string, IPStats>& stats, const Config& config) {
+    if (config.abuseipdb_api_key.empty()) {
+        std::cerr << "Warning: AbuseIPDB API key not configured\n";
+        std::cerr << "         Set api_key in [abuseipdb] section of " << config.config_file_path << "\n";
+        return;
+    }
+
+    // Collect all IPs that need enrichment
+    std::vector<std::string> ips_to_enrich;
+    for (const auto& [ip, stat] : stats) {
+        // Check if already enriched with AbuseIPDB data
+        bool has_abuseipdb = false;
+        if (stat.enrichment) {
+            has_abuseipdb = stat.enrichment->data.count("abuseScore") > 0;
+        }
+        if (!has_abuseipdb) {
+            ips_to_enrich.push_back(ip);
+        }
+    }
+
+    if (ips_to_enrich.empty()) {
+        return;
+    }
+
+    std::cout << "Enriching with AbuseIPDB data...\n";
+
+    // Process IPs with progress bar
+    size_t completed = 0;
+    size_t total = ips_to_enrich.size();
+    int bar_width = 40;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (const auto& ip : ips_to_enrich) {
+        try {
+            auto abuse_data = abuseipdb_lookup(ip, config.abuseipdb_api_key);
+
+            if (!abuse_data.empty()) {
+                auto& stat = stats[ip];
+                if (!stat.enrichment) {
+                    stat.enrichment = std::make_shared<EnrichmentData>();
+                    stat.enrichment->ip_address = ip;
+                }
+                for (const auto& [key, value] : abuse_data) {
+                    stat.enrichment->data[key] = value;
+                }
+            }
+
+            completed++;
+
+            // Display progress bar with elapsed time
+            float progress = static_cast<float>(completed) / total;
+            int pos = static_cast<int>(bar_width * progress);
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+
+            std::cerr << "\rEnriching [";
+            for (int i = 0; i < bar_width; ++i) {
+                if (i < pos) std::cerr << "=";
+                else if (i == pos) std::cerr << ">";
+                else std::cerr << " ";
+            }
+            std::cerr << "] " << completed << "/" << total << " ("
+                      << static_cast<int>(progress * 100) << "%) " << elapsed << "s";
+            std::cerr.flush();
+
+            // Rate limiting - AbuseIPDB free tier allows 1000/day
+            // Sleep 100ms between requests to be respectful
+            if (completed < total) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "\nWarning: AbuseIPDB lookup failed for " << ip << ": "
+                      << e.what() << "\n";
+        }
+    }
+    std::cerr << "\n";
+}
+
+// WHOIS lookup implementation
+std::map<std::string, std::string> whois_lookup(const std::string& ip_address) {
+    std::map<std::string, std::string> result;
+
+    // Try multiple WHOIS servers in order
+    std::vector<std::string> whois_servers = {
+        "whois.iana.org",      // IANA will redirect to appropriate RIR
+        "whois.arin.net",      // American Registry
+        "whois.ripe.net",      // European Registry
+        "whois.apnic.net",     // Asia Pacific Registry
+        "whois.lacnic.net",    // Latin America Registry
+        "whois.afrinic.net"    // African Registry
+    };
+
+    std::string whois_response;
+    bool got_response = false;
+
+    for (const auto& server : whois_servers) {
+        try {
+            // Create socket
+            int sock = socket(AF_INET, SOCK_STREAM, 0);
+            if (sock < 0) {
+                continue;
+            }
+
+            // Set timeout
+            struct timeval timeout;
+            timeout.tv_sec = 5;
+            timeout.tv_usec = 0;
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+            // Resolve hostname
+            struct hostent* host = gethostbyname(server.c_str());
+            if (!host) {
+                close(sock);
+                continue;
+            }
+
+            // Connect
+            struct sockaddr_in server_addr;
+            std::memset(&server_addr, 0, sizeof(server_addr));
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(43); // WHOIS port
+            std::memcpy(&server_addr.sin_addr.s_addr, host->h_addr, host->h_length);
+
+            if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+                close(sock);
+                continue;
+            }
+
+            // Send query
+            std::string query = ip_address + "\r\n";
+            if (send(sock, query.c_str(), query.length(), 0) < 0) {
+                close(sock);
+                continue;
+            }
+
+            // Read response
+            char buffer[4096];
+            std::string response;
+            ssize_t bytes_read;
+
+            while ((bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+                buffer[bytes_read] = '\0';
+                response += buffer;
+            }
+
+            close(sock);
+
+            // Check if response contains a referral
+            std::string referral_server;
+            if (response.find("refer:") != std::string::npos || response.find("ReferralServer:") != std::string::npos) {
+                std::istringstream ref_stream(response);
+                std::string ref_line;
+                while (std::getline(ref_stream, ref_line)) {
+                    if (ref_line.find("refer:") != std::string::npos || ref_line.find("ReferralServer:") != std::string::npos) {
+                        size_t colon_pos = ref_line.find(':');
+                        if (colon_pos != std::string::npos) {
+                            referral_server = ref_line.substr(colon_pos + 1);
+                            // Trim whitespace
+                            referral_server.erase(0, referral_server.find_first_not_of(" \t\r\n"));
+                            referral_server.erase(referral_server.find_last_not_of(" \t\r\n") + 1);
+                            // Remove whois:// prefix if present
+                            if (referral_server.find("whois://") == 0) {
+                                referral_server = referral_server.substr(8);
+                            }
+                            // Remove any trailing path (e.g., /43)
+                            size_t slash_pos = referral_server.find('/');
+                            if (slash_pos != std::string::npos) {
+                                referral_server = referral_server.substr(0, slash_pos);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If we got a referral, query that server
+            if (!referral_server.empty()) {
+                try {
+                    int ref_sock = socket(AF_INET, SOCK_STREAM, 0);
+                    if (ref_sock >= 0) {
+                        struct timeval timeout;
+                        timeout.tv_sec = 5;
+                        timeout.tv_usec = 0;
+                        setsockopt(ref_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+                        setsockopt(ref_sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+                        struct hostent* ref_host = gethostbyname(referral_server.c_str());
+                        if (ref_host) {
+                            struct sockaddr_in ref_addr;
+                            std::memset(&ref_addr, 0, sizeof(ref_addr));
+                            ref_addr.sin_family = AF_INET;
+                            ref_addr.sin_port = htons(43);
+                            std::memcpy(&ref_addr.sin_addr.s_addr, ref_host->h_addr, ref_host->h_length);
+
+                            if (connect(ref_sock, (struct sockaddr*)&ref_addr, sizeof(ref_addr)) >= 0) {
+                                std::string query = ip_address + "\r\n";
+                                if (send(ref_sock, query.c_str(), query.length(), 0) >= 0) {
+                                    char buffer[4096];
+                                    std::string ref_response;
+                                    ssize_t bytes_read;
+                                    while ((bytes_read = recv(ref_sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+                                        buffer[bytes_read] = '\0';
+                                        ref_response += buffer;
+                                    }
+                                    if (ref_response.length() > 100) {
+                                        response = ref_response;
+                                    }
+                                }
+                            }
+                        }
+                        close(ref_sock);
+                    }
+                } catch (...) {
+                    // Referral failed, use original response
+                }
+            }
+
+            // Check if we got a meaningful response
+            if (response.length() > 100) {
+                whois_response = response;
+                got_response = true;
+                break;
+            }
+
+        } catch (const std::exception& e) {
+            // Try next server
+            continue;
+        }
+    }
+
+    if (!got_response || whois_response.empty()) {
+        return result;
+    }
+
+    // Parse WHOIS response
+    std::istringstream stream(whois_response);
+    std::string line;
+
+    std::string netname;
+    std::string abuse_email;
+    std::string cidr;
+    std::string admin;
+
+    while (std::getline(stream, line)) {
+        // Trim whitespace
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+        // Convert to lowercase for case-insensitive matching
+        std::string lower_line = line;
+        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+        // Extract NetName
+        if (netname.empty() && (lower_line.find("netname:") == 0 || lower_line.find("orgname:") == 0)) {
+            size_t colon_pos = line.find(':');
+            if (colon_pos != std::string::npos) {
+                netname = line.substr(colon_pos + 1);
+                netname.erase(0, netname.find_first_not_of(" \t"));
+                netname.erase(netname.find_last_not_of(" \t") + 1);
+            }
+        }
+
+        // Extract Abuse Email
+        if (abuse_email.empty() && (lower_line.find("abuse-mailbox:") == 0 ||
+            lower_line.find("orgabuseemail:") == 0 ||
+            lower_line.find("abuse-c:") == 0 ||
+            lower_line.find("e-mail:") == 0)) {
+            size_t colon_pos = line.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string email = line.substr(colon_pos + 1);
+                email.erase(0, email.find_first_not_of(" \t"));
+                email.erase(email.find_last_not_of(" \t") + 1);
+                // Check if it looks like an email
+                if (email.find('@') != std::string::npos) {
+                    abuse_email = email;
+                }
+            }
+        }
+
+        // Extract CIDR
+        if (cidr.empty() && (lower_line.find("cidr:") == 0 ||
+            lower_line.find("inetnum:") == 0 ||
+            lower_line.find("netrange:") == 0)) {
+            size_t colon_pos = line.find(':');
+            if (colon_pos != std::string::npos) {
+                cidr = line.substr(colon_pos + 1);
+                cidr.erase(0, cidr.find_first_not_of(" \t"));
+                cidr.erase(cidr.find_last_not_of(" \t") + 1);
+            }
+        }
+
+        // Extract Admin contact
+        if (admin.empty() && (lower_line.find("admin-c:") == 0 ||
+            lower_line.find("orgadminname:") == 0 ||
+            lower_line.find("orgadminhandle:") == 0 ||
+            lower_line.find("person:") == 0)) {
+            size_t colon_pos = line.find(':');
+            if (colon_pos != std::string::npos) {
+                admin = line.substr(colon_pos + 1);
+                admin.erase(0, admin.find_first_not_of(" \t"));
+                admin.erase(admin.find_last_not_of(" \t") + 1);
+            }
+        }
+    }
+
+    // Store results
+    if (!netname.empty()) result["netname"] = netname;
+    if (!abuse_email.empty()) result["abuse"] = abuse_email;
+    if (!cidr.empty()) result["cidr"] = cidr;
+    if (!admin.empty()) result["admin"] = admin;
+
+    return result;
+}
+
+void enrich_whois_stats(std::map<std::string, IPStats>& stats, const Config& config) {
+    (void)config;  // Unused for now, may be used for caching in future
+
+    if (stats.empty()) {
+        return;
+    }
+
+    // Collect IPs that need enrichment
+    std::vector<std::string> ips_to_enrich;
+    for (const auto& [ip, stat] : stats) {
+        ips_to_enrich.push_back(ip);
+    }
+
+    std::cerr << "Enriching with WHOIS data...\n";
+
+    size_t total = ips_to_enrich.size();
+    size_t completed = 0;
+    const int bar_width = 50;
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (const auto& ip : ips_to_enrich) {
+        try {
+            auto whois_data = whois_lookup(ip);
+
+            if (!whois_data.empty()) {
+                auto& stat = stats[ip];
+                if (!stat.enrichment) {
+                    stat.enrichment = std::make_shared<EnrichmentData>();
+                    stat.enrichment->ip_address = ip;
+                }
+                for (const auto& [key, value] : whois_data) {
+                    stat.enrichment->data[key] = value;
+                }
+            }
+
+            completed++;
+
+            // Display progress bar with elapsed time
+            float progress = static_cast<float>(completed) / total;
+            int pos = static_cast<int>(bar_width * progress);
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+
+            std::cerr << "\rEnriching [";
+            for (int i = 0; i < bar_width; ++i) {
+                if (i < pos) std::cerr << "=";
+                else if (i == pos) std::cerr << ">";
+                else std::cerr << " ";
+            }
+            std::cerr << "] " << completed << "/" << total << " ("
+                      << static_cast<int>(progress * 100) << "%) " << elapsed << "s";
+            std::cerr.flush();
+
+            // Rate limiting - be respectful to WHOIS servers
+            // Sleep 1 second between requests
+            if (completed < total) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "\nWarning: WHOIS lookup failed for " << ip << ": "
+                      << e.what() << "\n";
+        }
+    }
+    std::cerr << "\n";
 }
 
 } // namespace ipdigger

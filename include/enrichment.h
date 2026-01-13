@@ -139,11 +139,16 @@ std::map<std::string, std::string> find_maxmind_databases();
 
 /**
  * Download MaxMind GeoLite2 databases
+ * @param account_id MaxMind account ID
  * @param license_key MaxMind license key
  * @param db_dir Directory to store databases
  * @return True if successful
  */
-bool download_maxmind_databases(const std::string& license_key, const std::string& db_dir);
+bool download_maxmind_databases(
+    const std::string& account_id,
+    const std::string& license_key,
+    const std::string& db_dir
+);
 
 /**
  * Lookup GeoIP information using MaxMind database
@@ -183,6 +188,51 @@ void enrich_rdns_stats(std::map<std::string, IPStats>& stats, const Config& conf
  * @param config Configuration
  */
 void enrich_geoip_stats(std::map<std::string, IPStats>& stats, const Config& config);
+
+/**
+ * Enrich statistics with AbuseIPDB data
+ * @param stats Map of IP statistics (modified in place)
+ * @param config Configuration
+ */
+void enrich_abuseipdb_stats(std::map<std::string, IPStats>& stats, const Config& config);
+
+/**
+ * Lookup IP information from AbuseIPDB
+ * @param ip_address IP address to lookup
+ * @param api_key AbuseIPDB API key
+ * @return Map of fields (abuseConfidenceScore, usageType, totalReports, isp)
+ */
+std::map<std::string, std::string> abuseipdb_lookup(
+    const std::string& ip_address,
+    const std::string& api_key
+);
+
+/**
+ * Make HTTP GET request with custom headers
+ * @param url Full URL
+ * @param headers Map of header names to values
+ * @param timeout_ms Request timeout in milliseconds
+ * @return Response body as string
+ */
+std::string http_get_with_headers(
+    const std::string& url,
+    const std::map<std::string, std::string>& headers,
+    size_t timeout_ms
+);
+
+/**
+ * Enrich statistics with WHOIS data
+ * @param stats Map of IP statistics (modified in place)
+ * @param config Configuration
+ */
+void enrich_whois_stats(std::map<std::string, IPStats>& stats, const Config& config);
+
+/**
+ * Lookup IP information from WHOIS
+ * @param ip_address IP address to lookup
+ * @return Map of fields (netname, abuse_email, cidr, admin)
+ */
+std::map<std::string, std::string> whois_lookup(const std::string& ip_address);
 
 } // namespace ipdigger
 

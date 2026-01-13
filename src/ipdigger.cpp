@@ -14,7 +14,7 @@
 namespace ipdigger {
 
 std::string get_version() {
-    return "1.0.0";
+    return "1.2.0";
 }
 
 std::vector<std::string> extract_ip_addresses(const std::string& line) {
@@ -50,6 +50,123 @@ std::vector<std::string> extract_ip_addresses(const std::string& line) {
     }
 
     return ip_addresses;
+}
+
+bool is_private_ip(const std::string& ip) {
+    // Check for IPv4 private addresses
+    if (ip.find('.') != std::string::npos) {
+        // Parse IPv4 address
+        unsigned int a, b, c, d;
+        if (sscanf(ip.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+            // Check ranges
+            if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+
+            // 10.0.0.0/8
+            if (a == 10) return true;
+
+            // 172.16.0.0/12
+            if (a == 172 && b >= 16 && b <= 31) return true;
+
+            // 192.168.0.0/16
+            if (a == 192 && b == 168) return true;
+
+            // 127.0.0.0/8 (loopback)
+            if (a == 127) return true;
+
+            // 169.254.0.0/16 (link-local)
+            if (a == 169 && b == 254) return true;
+
+            // 0.0.0.0/8 (current network)
+            if (a == 0) return true;
+        }
+        return false;
+    }
+
+    // Check for IPv6 private/local addresses
+    if (ip.find(':') != std::string::npos) {
+        std::string lower_ip = ip;
+        std::transform(lower_ip.begin(), lower_ip.end(), lower_ip.begin(), ::tolower);
+
+        // ::1 (loopback)
+        if (lower_ip == "::1") return true;
+
+        // fe80::/10 (link-local) - starts with fe8, fe9, fea, or feb
+        if (lower_ip.substr(0, 3) == "fe8" ||
+            lower_ip.substr(0, 3) == "fe9" ||
+            lower_ip.substr(0, 3) == "fea" ||
+            lower_ip.substr(0, 3) == "feb") return true;
+
+        // fc00::/7 (unique local) - starts with fc or fd
+        if (lower_ip.substr(0, 2) == "fc" || lower_ip.substr(0, 2) == "fd") return true;
+
+        // ::ffff:x.x.x.x (IPv4-mapped IPv6)
+        if (lower_ip.find("::ffff:") == 0) {
+            // Extract the IPv4 part and check if it's private
+            size_t ipv4_start = lower_ip.find_last_of(':') + 1;
+            if (ipv4_start != std::string::npos) {
+                std::string ipv4_part = lower_ip.substr(ipv4_start);
+                return is_private_ip(ipv4_part);
+            }
+        }
+    }
+
+    return false;
+}
+
+std::string detect_login_status(const std::string& line) {
+    // Convert line to lowercase for case-insensitive matching
+    std::string lower_line = line;
+    std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+    // Keywords that indicate login failure
+    std::vector<std::string> failure_keywords = {
+        "failed",
+        "failure",
+        "fail",
+        "wrong password",
+        "wrong username",
+        "invalid password",
+        "invalid username",
+        "invalid user",
+        "authentication failure",
+        "authentication failed",
+        "auth failed",
+        "auth failure",
+        "denied",
+        "no access",
+        "access denied",
+        "blocked",
+        "banned",
+        "unsuccessful",
+        "not allowed",
+        "rejected",
+        "bad password",
+        "incorrect password",
+        "incorrect username",
+        "login denied",
+        "login failed",
+        "logon failure",
+        "bad login",
+        "bad credentials",
+        "invalid credentials",
+        "unknown user",
+        "user not found",
+        "no such user",
+        "lockout",
+        "locked out",
+        "too many attempts",
+        "brute force"
+    };
+
+    // Check if line contains any failure keywords
+    for (const auto& keyword : failure_keywords) {
+        if (lower_line.find(keyword) != std::string::npos) {
+            return "failed";
+        }
+    }
+
+    // Default to success (we only mark as failed if we find keywords)
+    return "success";
 }
 
 std::string extract_date(const std::string& line, time_t& timestamp) {
@@ -115,7 +232,7 @@ static void display_parse_progress(size_t bytes_read, size_t file_size, const st
     std::cerr.flush();
 }
 
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress) {
+std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress, bool detect_login) {
     std::vector<IPEntry> entries;
     std::ifstream file(filename);
 
@@ -158,12 +275,19 @@ std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress)
         time_t timestamp;
         std::string date_str = extract_date(line, timestamp);
 
+        // Detect login status if requested
+        std::string login_status = "";
+        if (detect_login) {
+            login_status = detect_login_status(line);
+        }
+
         // Create an entry for each IP address found on this line
         for (const auto& ip : ip_addresses) {
             IPEntry entry;
             entry.ip_address = ip;
             entry.date_string = date_str;
             entry.filename = filename;
+            entry.login_status = login_status;
             entry.line_number = line_number;
             entry.timestamp = timestamp;
             entries.push_back(entry);
@@ -221,12 +345,12 @@ std::vector<std::string> expand_glob(const std::string& pattern) {
     return files;
 }
 
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress) {
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress, bool detect_login) {
     std::vector<IPEntry> all_entries;
 
     for (const auto& filename : filenames) {
         try {
-            auto entries = parse_file(filename, show_progress);
+            auto entries = parse_file(filename, show_progress, detect_login);
             all_entries.insert(all_entries.end(), entries.begin(), entries.end());
         } catch (const std::exception& e) {
             // Log error but continue with other files
@@ -251,6 +375,8 @@ std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& e
             stat.first_timestamp = entry.timestamp;
             stat.last_timestamp = entry.timestamp;
             stat.count = 1;
+            stat.login_success_count = 0;
+            stat.login_failed_count = 0;
         } else {
             // Subsequent occurrence
             stat.count++;
@@ -268,6 +394,13 @@ std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& e
                 stat.last_seen = entry.date_string;
                 stat.last_timestamp = entry.timestamp;
             }
+        }
+
+        // Count login statuses
+        if (entry.login_status == "success") {
+            stat.login_success_count++;
+        } else if (entry.login_status == "failed") {
+            stat.login_failed_count++;
         }
     }
 
@@ -384,6 +517,15 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
         return;
     }
 
+    // Check if login detection is enabled
+    bool has_login_data = false;
+    for (const auto& [ip, stat] : stats) {
+        if (stat.login_success_count > 0 || stat.login_failed_count > 0) {
+            has_login_data = true;
+            break;
+        }
+    }
+
     // Check for enrichment data and collect field names
     std::vector<std::string> enrich_fields;
     std::map<std::string, size_t> enrich_widths;
@@ -404,6 +546,7 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
     size_t first_width = 19;
     size_t last_width = 19;
     size_t count_width = 5;
+    size_t login_width = 12;  // "OK: 5 F: 10"
 
     for (const auto& [ip, stat] : stats) {
         ip_width = std::max(ip_width, ip.length());
@@ -418,6 +561,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
 
     // Print header
     size_t separator_width = ip_width + first_width + last_width + count_width + 13;
+    if (has_login_data) {
+        separator_width += login_width + 3;
+    }
     for (const auto& field : enrich_fields) {
         separator_width += enrich_widths[field] + 3;
     }
@@ -427,6 +573,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
               << " | " << std::setw(first_width) << "First Seen"
               << " | " << std::setw(last_width) << "Last Seen"
               << " | " << std::right << std::setw(count_width) << "Count";
+    if (has_login_data) {
+        std::cout << " | " << std::left << std::setw(login_width) << "Login";
+    }
     for (const auto& field : enrich_fields) {
         std::cout << " | " << std::left << std::setw(enrich_widths[field]) << field;
     }
@@ -449,6 +598,11 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
                   << " | " << std::setw(last_width)
                   << (stat.last_seen.empty() ? "(no date)" : stat.last_seen)
                   << " | " << std::right << std::setw(count_width) << stat.count;
+        if (has_login_data) {
+            std::string login_str = "OK:" + std::to_string(stat.login_success_count) +
+                                   " F:" + std::to_string(stat.login_failed_count);
+            std::cout << " | " << std::left << std::setw(login_width) << login_str;
+        }
         for (const auto& field : enrich_fields) {
             std::string value = "";
             if (stat.enrichment && stat.enrichment->data.count(field)) {
@@ -588,7 +742,9 @@ void print_stats_json(const std::map<std::string, IPStats>& stats) {
         std::cout << ",\n";
         std::cout << "      \"count\": " << stat.count << ",\n";
         std::cout << "      \"first_timestamp\": " << stat.first_timestamp << ",\n";
-        std::cout << "      \"last_timestamp\": " << stat.last_timestamp;
+        std::cout << "      \"last_timestamp\": " << stat.last_timestamp << ",\n";
+        std::cout << "      \"login_success_count\": " << stat.login_success_count << ",\n";
+        std::cout << "      \"login_failed_count\": " << stat.login_failed_count;
 
         // Add enrichment data if present
         if (stat.enrichment && !stat.enrichment->data.empty()) {

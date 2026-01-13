@@ -19,6 +19,7 @@ struct IPEntry {
     std::string ip_address;
     std::string date_string;
     std::string filename;
+    std::string login_status;  // "success", "failed", or empty if not detected
     size_t line_number;
     time_t timestamp;  // Parsed timestamp, 0 if no date found
     std::shared_ptr<EnrichmentData> enrichment;  // Optional enrichment data
@@ -32,6 +33,8 @@ struct IPStats {
     std::string first_seen;
     std::string last_seen;
     size_t count;
+    size_t login_success_count;  // Count of successful logins
+    size_t login_failed_count;   // Count of failed logins
     time_t first_timestamp;
     time_t last_timestamp;
     std::shared_ptr<EnrichmentData> enrichment;  // Optional enrichment data
@@ -43,6 +46,20 @@ struct IPStats {
  * @return Vector of IP addresses found
  */
 std::vector<std::string> extract_ip_addresses(const std::string& line);
+
+/**
+ * Check if an IP address is private/local
+ * @param ip The IP address to check
+ * @return true if the IP is in a private range, false otherwise
+ */
+bool is_private_ip(const std::string& ip);
+
+/**
+ * Detect login status from a line of text
+ * @param line The text line to parse
+ * @return "failed" if failure keywords found, "success" otherwise
+ */
+std::string detect_login_status(const std::string& line);
 
 /**
  * Extract date/timestamp from a line of text
@@ -57,17 +74,19 @@ std::string extract_date(const std::string& line, time_t& timestamp);
  * Parse a file and extract all IP entries
  * @param filename Path to file to parse
  * @param show_progress Show progress bar for large files
+ * @param detect_login Detect login status from log lines
  * @return Vector of IPEntry objects
  */
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress = false);
+std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress = false, bool detect_login = false);
 
 /**
  * Parse multiple files and extract all IP entries
  * @param filenames Vector of file paths to parse
  * @param show_progress Show progress bar for large files
+ * @param detect_login Detect login status from log lines
  * @return Vector of IPEntry objects from all files
  */
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress = false);
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress = false, bool detect_login = false);
 
 /**
  * Expand glob pattern to list of files
