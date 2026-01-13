@@ -1,0 +1,55 @@
+# IPDigger Configuration Example
+# Copy this file to ~/.ipdigger/settings.conf and configure your API keys
+
+[output]
+# Default output settings (can be overridden by CLI flags)
+default_enrich = false        # Enable --enrich by default
+default_stats = false         # Enable --stats by default
+default_json = false          # Enable --output-json by default
+
+[enrichment]
+# Enrichment feature toggles
+enrich_geo = true            # Enable geolocation data
+enrich_threat = true         # Enable threat intelligence
+parallel_requests = 3        # Max concurrent API requests
+timeout_ms = 5000            # Request timeout (milliseconds)
+
+[cache]
+# Cache configuration
+cache_dir = ~/.ipdigger/cache
+cache_ttl_hours = 24         # Cache validity period
+cache_enabled = true         # Enable/disable caching
+
+[api_providers]
+# Generic API provider configuration
+# Format: provider<N>_<attribute> = value
+# Supported types: geo, threat
+
+# Example: IPInfo.io for geolocation
+# Get a free API key at https://ipinfo.io/signup (50k requests/month free)
+provider1_name = IPInfo
+provider1_type = geo
+provider1_url = https://ipinfo.io/{ip}/json?token={api_key}
+provider1_api_key = YOUR_IPINFO_API_KEY_HERE
+provider1_enabled = false    # Set to true after adding your API key
+provider1_timeout_ms = 5000
+provider1_rate_limit_ms = 100
+
+# Example: AbuseIPDB for threat intelligence
+# Get a free API key at https://www.abuseipdb.com/api (1k requests/day free)
+provider2_name = AbuseIPDB
+provider2_type = threat
+provider2_url = https://api.abuseipdb.com/api/v2/check?ipAddress={ip}
+provider2_api_key = YOUR_ABUSEIPDB_API_KEY_HERE
+provider2_enabled = false    # Set to true after adding your API key
+provider2_timeout_ms = 5000
+provider2_rate_limit_ms = 1000
+
+# You can add more providers by incrementing the number
+# provider3_name = YourProvider
+# provider3_type = geo
+# provider3_url = https://api.yourprovider.com/{ip}?key={api_key}
+# provider3_api_key = YOUR_KEY_HERE
+# provider3_enabled = true
+# provider3_timeout_ms = 5000
+# provider3_rate_limit_ms = 100
