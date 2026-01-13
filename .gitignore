@@ -1,0 +1,33 @@
+# Build artifacts
+obj/
+bin/
+*.o
+*.d
+*.a
+*.so
+*.dylib
+
+# Debian packaging
+debian/
+*.deb
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled executables
+ipdigger
+test_ipdigger
+
+# Debug files
+*.dSYM/
+core
+vgcore.*
+
+# Generated files
+*.log
+compile_commands.json
