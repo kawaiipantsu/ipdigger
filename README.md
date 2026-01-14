@@ -24,7 +24,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 🛡️ **Threat Intel**: AbuseIPDB abuse scoring
 - 📋 **WHOIS**: Network ownership and abuse contacts
 - 🌐 **Reverse DNS**: Hostname resolution
-- 🎯 **Filtering**: Private IPs, top N IPs
+- 🎯 **Filtering**: Private IPs, top N IPs, geographic filtering (EU/GDPR regions)
 - 📦 **Formats**: ASCII tables or JSON output
 - 🔒 **Secure**: Full security hardening (PIE, RELRO, stack protection)
 
@@ -66,6 +66,9 @@ ipdigger --enrich-geo --enrich-whois /var/log/auth.log
 # Find top attackers
 ipdigger --detect-login --top-20 --no-private /var/log/auth.log
 
+# Geographic filtering (non-EU traffic)
+ipdigger --geo-filter-none-eu /var/log/auth.log
+
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
          --detect-login --top-10 --output-json /var/log/auth.log
@@ -89,11 +92,13 @@ Analysis:
   --detect-login     Detect and track login attempts (success/failed)
 
 Filtering:
-  --no-private       Exclude private/local network addresses
-  --top-10           Show only top 10 IPs by count
-  --top-20           Show only top 20 IPs by count
-  --top-50           Show only top 50 IPs by count
-  --top-100          Show only top 100 IPs by count
+  --no-private           Exclude private/local network addresses
+  --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)
+  --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)
+  --top-10               Show only top 10 IPs by count
+  --top-20               Show only top 20 IPs by count
+  --top-50               Show only top 50 IPs by count
+  --top-100              Show only top 100 IPs by count
 
 Info:
   --help             Display help message
@@ -144,6 +149,31 @@ ipdigger --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log
 |-------------|---------|-----------|-----------|-------------|
 | 45.67.89.12 | CN      | Shanghai  | 95        | 247         |
 | 23.45.67.89 | RU      | Moscow    | 87        | 156         |
+```
+
+### Geographic Filtering
+```bash
+# Show only IPs outside the EU (27 countries)
+ipdigger --geo-filter-none-eu /var/log/auth.log
+```
+```
+| IP Address   | Country | City         | Count |
+|-------------|---------|--------------|-------|
+| 8.8.8.8     | US      | Mountain View|    12 |
+| 45.67.89.12 | CN      | Shanghai     |     8 |
+| 23.45.67.89 | RU      | Moscow       |     5 |
+```
+
+```bash
+# Show only IPs outside GDPR-compliant regions (EU + EEA + UK + CH = 32 countries)
+ipdigger --geo-filter-none-gdpr /var/log/nginx/access.log
+```
+```
+| IP Address   | Country | Count |
+|-------------|---------|-------|
+| 8.8.8.8     | US      |    45 |
+| 1.1.1.1     | AU      |    23 |
+| 45.67.89.12 | CN      |    15 |
 ```
 
 ### JSON Output
@@ -198,6 +228,43 @@ IPDigger automatically detects timestamps in various formats:
 - Firewall logs
 - VPN logs
 
+## Geographic Filtering
+
+IPDigger includes built-in geographic filters to help with compliance analysis, threat intelligence, and traffic segmentation.
+
+### Available Filters
+
+| Filter | Regions Excluded | Countries | Use Case |
+|--------|------------------|-----------|----------|
+| `--geo-filter-none-eu` | EU member states only | 27 | Focus on non-EU traffic |
+| `--geo-filter-none-gdpr` | EU + EEA + UK + Switzerland | 32 | Identify non-GDPR traffic |
+
+### EU Member States (27)
+Austria (AT), Belgium (BE), Bulgaria (BG), Croatia (HR), Cyprus (CY), Czech Republic (CZ), Denmark (DK), Estonia (EE), Finland (FI), France (FR), Germany (DE), Greece (GR), Hungary (HU), Ireland (IE), Italy (IT), Latvia (LV), Lithuania (LT), Luxembourg (LU), Malta (MT), Netherlands (NL), Poland (PL), Portugal (PT), Romania (RO), Slovakia (SK), Slovenia (SI), Spain (ES), Sweden (SE)
+
+### GDPR-Compliant Regions (32)
+EU27 + Iceland (IS), Liechtenstein (LI), Norway (NO), United Kingdom (GB), Switzerland (CH)
+
+### Filter Behavior
+
+- **Auto-enables enrichment**: Geographic filters automatically enable `--enrich-geo`
+- **Benefit-of-doubt policy**: IPs without country codes (e.g., private IPs, lookup failures) are included in results
+- **Stackable filters**: Can be combined with other filters like `--no-private` and `--top-N`
+- **Works with both outputs**: Compatible with ASCII table and JSON output formats
+
+### Example Usage
+
+```bash
+# Security: Find non-EU attackers
+ipdigger --geo-filter-none-eu --detect-login --no-private /var/log/auth.log
+
+# Compliance: Audit non-GDPR traffic
+ipdigger --geo-filter-none-gdpr --enrich-geo --output-json /var/log/nginx/access.log
+
+# Combined filtering: Top 10 non-EU IPs with threat intel
+ipdigger --geo-filter-none-eu --enrich-abuseipdb --top-10 /var/log/auth.log
+```
+
 ## Configuration
 
 Create `~/.ipdigger/settings.conf` for API keys and caching:
@@ -242,6 +309,12 @@ ipdigger --enrich-whois --detect-login --top-10 /var/log/auth.log
 ```bash
 # Map traffic sources
 ipdigger --enrich-geo --output-json /var/log/nginx/access.log > traffic.json
+
+# Focus on non-EU traffic for compliance analysis
+ipdigger --geo-filter-none-eu --enrich-geo --top-20 /var/log/nginx/access.log
+
+# Identify traffic from outside GDPR regions
+ipdigger --geo-filter-none-gdpr --detect-login --no-private /var/log/auth.log
 ```
 
 **Comprehensive Investigation:**
