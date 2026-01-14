@@ -234,6 +234,21 @@ void enrich_whois_stats(std::map<std::string, IPStats>& stats, const Config& con
  */
 std::map<std::string, std::string> whois_lookup(const std::string& ip_address);
 
+/**
+ * Enrich statistics with ping data
+ * @param stats Map of IP statistics (modified in place)
+ * @param config Configuration
+ */
+void enrich_ping_stats(std::map<std::string, IPStats>& stats, const Config& config);
+
+/**
+ * Ping a host and measure response time
+ * @param ip_address IP address to ping
+ * @param ping_count Number of ping attempts
+ * @return String with "avg: Xms jitter: Yms" or "DEAD" if unreachable
+ */
+std::string ping_host(const std::string& ip_address, int ping_count = 3);
+
 } // namespace ipdigger
 
 #endif // IPDIGGER_ENRICHMENT_H

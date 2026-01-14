@@ -27,6 +27,7 @@ void print_usage(const char* program_name) {
     std::cout << "  --enrich-rdns      Enrich IPs with reverse DNS lookups\n";
     std::cout << "  --enrich-abuseipdb Enrich IPs with AbuseIPDB threat intelligence\n";
     std::cout << "  --enrich-whois     Enrich IPs with WHOIS data (netname, abuse, CIDR, admin)\n";
+    std::cout << "  --enrich-ping      Enrich IPs with ping response time and availability\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
     std::cout << "  --no-private       Exclude private/local network addresses from output\n";
     std::cout << "  --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)\n";
@@ -44,6 +45,7 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-whois /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-ping /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
@@ -87,6 +89,7 @@ int main(int argc, char* argv[]) {
     bool enable_rdns = false;
     bool enable_abuseipdb = false;
     bool enable_whois = false;
+    bool enable_ping = false;
     bool no_private = false;
     bool detect_login = false;
     bool geo_filter_none_eu = false;
@@ -113,6 +116,8 @@ int main(int argc, char* argv[]) {
             enable_abuseipdb = true;
         } else if (arg == "--enrich-whois") {
             enable_whois = true;
+        } else if (arg == "--enrich-ping") {
+            enable_ping = true;
         } else if (arg == "--no-private") {
             no_private = true;
         } else if (arg == "--detect-login") {
@@ -240,7 +245,7 @@ int main(int argc, char* argv[]) {
         auto stats = ipdigger::generate_statistics(entries);
 
         // Enrich statistics if requested
-        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois) {
+        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping) {
             if (enable_geo) {
                 if (!output_json) std::cout << "Enriching with GeoIP data...\n";
                 ipdigger::enrich_geoip_stats(stats, config);
@@ -256,6 +261,10 @@ int main(int argc, char* argv[]) {
 
             if (enable_whois) {
                 ipdigger::enrich_whois_stats(stats, config);
+            }
+
+            if (enable_ping) {
+                ipdigger::enrich_ping_stats(stats, config);
             }
         }
 

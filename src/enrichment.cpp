@@ -1008,6 +1008,11 @@ std::map<std::string, std::string> abuseipdb_lookup(
             if (data.contains("isp") && !data["isp"].is_null()) {
                 result["isp"] = data["isp"].get<std::string>();
             }
+
+            // Extract isTor
+            if (data.contains("isTor")) {
+                result["isTor"] = data["isTor"].get<bool>() ? "Yes" : "No";
+            }
         }
     } catch (const std::exception& e) {
         // Silently fail - don't pollute output
@@ -1395,6 +1400,132 @@ void enrich_whois_stats(std::map<std::string, IPStats>& stats, const Config& con
             }
         } catch (const std::exception& e) {
             std::cerr << "\nWarning: WHOIS lookup failed for " << ip << ": "
+                      << e.what() << "\n";
+        }
+    }
+    std::cerr << "\n";
+}
+
+// Ping host implementation
+std::string ping_host(const std::string& ip_address, int ping_count) {
+    std::string result;
+
+    // Build ping command - use -c for count, -W for timeout
+    std::string cmd = "ping -c " + std::to_string(ping_count) + " -W 1 " + ip_address + " 2>&1";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return "DEAD";
+    }
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int status = pclose(pipe);
+
+    // Check if ping failed (host unreachable)
+    if (status != 0 || output.find("100% packet loss") != std::string::npos) {
+        return "DEAD";
+    }
+
+    // Parse statistics line - look for patterns like:
+    // rtt min/avg/max/mdev = 10.123/20.456/30.789/5.123 ms
+    size_t rtt_pos = output.find("rtt min/avg/max/mdev");
+    if (rtt_pos == std::string::npos) {
+        // Alternative format for some systems
+        rtt_pos = output.find("round-trip min/avg/max");
+    }
+
+    if (rtt_pos != std::string::npos) {
+        // Find the equals sign
+        size_t eq_pos = output.find("=", rtt_pos);
+        if (eq_pos != std::string::npos) {
+            // Extract the values: min/avg/max/mdev
+            std::string values_str = output.substr(eq_pos + 1);
+
+            // Parse: min/avg/max/mdev = X.X/Y.Y/Z.Z/W.W ms
+            std::istringstream iss(values_str);
+            float min_time, avg_time, max_time, mdev_time;
+            char slash;
+
+            iss >> min_time >> slash >> avg_time >> slash >> max_time >> slash >> mdev_time;
+
+            if (iss) {
+                // Format: "avg: XXms jitter: YYms"
+                std::ostringstream result_stream;
+                result_stream << std::fixed << std::setprecision(1);
+                result_stream << "avg: " << avg_time << "ms jitter: " << mdev_time << "ms";
+                return result_stream.str();
+            }
+        }
+    }
+
+    return "DEAD";
+}
+
+void enrich_ping_stats(std::map<std::string, IPStats>& stats, const Config& config) {
+    (void)config;  // Unused for now, but kept for consistency with other enrich functions
+
+    // Collect all IPs that need ping enrichment
+    std::vector<std::string> ips_to_ping;
+    for (const auto& [ip, stat] : stats) {
+        // Check if already enriched with ping data
+        bool has_ping = false;
+        if (stat.enrichment) {
+            has_ping = stat.enrichment->data.count("ping") > 0;
+        }
+        if (!has_ping) {
+            ips_to_ping.push_back(ip);
+        }
+    }
+
+    if (ips_to_ping.empty()) {
+        return;
+    }
+
+    std::cout << "Enriching with ping data...\n";
+
+    // Process IPs with progress bar
+    size_t completed = 0;
+    size_t total = ips_to_ping.size();
+    int bar_width = 40;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (const auto& ip : ips_to_ping) {
+        try {
+            std::string ping_result = ping_host(ip, 3);
+
+            auto& stat = stats[ip];
+            if (!stat.enrichment) {
+                stat.enrichment = std::make_shared<EnrichmentData>();
+                stat.enrichment->ip_address = ip;
+            }
+            stat.enrichment->data["ping"] = ping_result;
+
+            completed++;
+
+            // Display progress bar with elapsed time
+            float progress = static_cast<float>(completed) / total;
+            int pos = static_cast<int>(bar_width * progress);
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+
+            std::cerr << "\rPinging [";
+            for (int i = 0; i < bar_width; ++i) {
+                if (i < pos) std::cerr << "=";
+                else if (i == pos) std::cerr << ">";
+                else std::cerr << " ";
+            }
+            std::cerr << "] " << completed << "/" << total << " ("
+                      << static_cast<int>(progress * 100) << "%) " << elapsed << "s";
+            std::cerr.flush();
+
+        } catch (const std::exception& e) {
+            std::cerr << "\nWarning: Ping failed for " << ip << ": "
                       << e.what() << "\n";
         }
     }

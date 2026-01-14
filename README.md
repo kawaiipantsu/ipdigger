@@ -21,9 +21,10 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 📊 **Statistics**: Count, first/last seen per IP
 - 🌍 **GeoIP**: MaxMind country/city/ASN data
 - 🔐 **Login Detection**: Track authentication success/failures
-- 🛡️ **Threat Intel**: AbuseIPDB abuse scoring
+- 🛡️ **Threat Intel**: AbuseIPDB abuse scoring & Tor exit node detection
 - 📋 **WHOIS**: Network ownership and abuse contacts
 - 🌐 **Reverse DNS**: Hostname resolution
+- 🏓 **Ping Detection**: Response time measurement and host availability
 - 🎯 **Filtering**: Private IPs, top N IPs, geographic filtering (EU/GDPR regions)
 - 📦 **Formats**: ASCII tables or JSON output
 - 🔒 **Secure**: Full security hardening (PIE, RELRO, stack protection)
@@ -69,6 +70,9 @@ ipdigger --detect-login --top-20 --no-private /var/log/auth.log
 # Geographic filtering (non-EU traffic)
 ipdigger --geo-filter-none-eu /var/log/auth.log
 
+# Check host availability
+ipdigger --enrich-ping --top-10 /var/log/nginx/access.log
+
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
          --detect-login --top-10 --output-json /var/log/auth.log
@@ -87,6 +91,7 @@ Enrichment:
   --enrich-rdns      Enrich with reverse DNS lookups
   --enrich-abuseipdb Enrich with AbuseIPDB threat intelligence
   --enrich-whois     Enrich with WHOIS data (netname, abuse, CIDR, admin)
+  --enrich-ping      Enrich with ping response time and availability
 
 Analysis:
   --detect-login     Detect and track login attempts (success/failed)
@@ -145,10 +150,10 @@ ipdigger --enrich-whois /var/log/auth.log
 ipdigger --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log
 ```
 ```
-| IP Address   | Country | City      | abuseScore | totalReports |
-|-------------|---------|-----------|-----------|-------------|
-| 45.67.89.12 | CN      | Shanghai  | 95        | 247         |
-| 23.45.67.89 | RU      | Moscow    | 87        | 156         |
+| IP Address   | Country | City      | abuseScore | totalReports | isTor |
+|-------------|---------|-----------|-----------|-------------|-------|
+| 45.67.89.12 | CN      | Shanghai  | 95        | 247         | No    |
+| 23.45.67.89 | RU      | Moscow    | 87        | 156         | Yes   |
 ```
 
 ### Geographic Filtering
@@ -176,32 +181,90 @@ ipdigger --geo-filter-none-gdpr /var/log/nginx/access.log
 | 45.67.89.12 | CN      |    15 |
 ```
 
+### Ping Detection
+```bash
+# Check host availability and response times
+ipdigger --enrich-ping /var/log/nginx/access.log
+```
+```
+| IP Address   | Count | Ping / Alive              |
+|-------------|-------|---------------------------|
+| 8.8.8.8     |    23 | avg: 21.5ms jitter: 0.2ms |
+| 1.1.1.1     |    15 | avg: 15.3ms jitter: 1.1ms |
+| 203.0.113.5 |     8 | DEAD                      |
+```
+
+The ping feature:
+- **Progress bar** - Shows real-time progress while pinging hosts
+- **Average ping time** - Mean response time over 3 ping attempts
+- **Jitter** - Variation in response times (mdev/stddev)
+- **DEAD status** - Shown for unreachable or unresponsive hosts
+
 ### JSON Output
 ```bash
-ipdigger --enrich-whois --output-json /var/log/auth.log
+ipdigger --enrich-geo --enrich-abuseipdb --output-json /var/log/auth.log
 ```
 ```json
 {
   "statistics": [
     {
-      "ip_address": "8.8.8.8",
+      "ip_address": "45.67.89.12",
       "first_seen": "2024-01-13 10:00:00",
       "last_seen": "2024-01-13 10:03:00",
-      "count": 2,
+      "count": 8,
       "first_timestamp": 1705136400,
       "last_timestamp": 1705136580,
-      "login_success_count": 2,
-      "login_failed_count": 0,
+      "login_success_count": 0,
+      "login_failed_count": 8,
       "enrichment": {
-        "netname": "GOGL",
-        "abuse": "network-abuse@google.com",
-        "cidr": "8.8.8.0 - 8.8.8.255"
+        "cc": "CN",
+        "country": "China",
+        "city": "Shanghai",
+        "asn": "AS4134",
+        "org": "Chinanet",
+        "abuseScore": "95",
+        "usageType": "Data Center/Web Hosting/Transit",
+        "totalReports": "247",
+        "isp": "China Telecom",
+        "isTor": "No"
       }
     }
   ],
   "total": 1
 }
 ```
+
+## Enrichment Data
+
+IPDigger can enrich IP addresses with data from multiple sources:
+
+### GeoIP (MaxMind)
+- `cc` - Country code (ISO 2-letter, e.g., "US", "CN")
+- `country` - Country name (e.g., "United States", "China")
+- `city` - City name (e.g., "San Francisco", "Shanghai")
+- `asn` - Autonomous System Number (e.g., "AS15169")
+- `org` - Organization/ISP name
+
+### AbuseIPDB
+- `abuseScore` - Abuse confidence score (0-100)
+- `usageType` - Type of IP usage (e.g., "Data Center/Web Hosting/Transit")
+- `totalReports` - Total number of abuse reports
+- `isp` - Internet Service Provider name
+- `isTor` - Whether IP is a Tor exit node ("Yes" or "No")
+
+### WHOIS
+- `netname` - Network name
+- `abuse` - Abuse contact email
+- `cidr` - IP address range in CIDR notation
+- `admin` - Administrative contact
+
+### Reverse DNS
+- `rdns` - Reverse hostname lookup result
+
+### Ping
+- `ping` - Response time and availability (e.g., "avg: 23.5ms jitter: 3.0ms" or "DEAD")
+
+All enrichment fields are automatically included in both ASCII table and JSON output formats when the corresponding enrichment flag is used.
 
 ## Supported Log Formats
 
@@ -265,6 +328,39 @@ ipdigger --geo-filter-none-gdpr --enrich-geo --output-json /var/log/nginx/access
 ipdigger --geo-filter-none-eu --enrich-abuseipdb --top-10 /var/log/auth.log
 ```
 
+## Tor Exit Node Detection
+
+IPDigger automatically detects Tor exit nodes when using `--enrich-abuseipdb`. This is useful for identifying anonymous traffic and potential security threats.
+
+### How It Works
+
+The `isTor` field is extracted from the AbuseIPDB API response and displays:
+- **"Yes"** - IP is a known Tor exit node
+- **"No"** - IP is not a Tor exit node
+
+### Why It Matters
+
+Tor exit nodes are commonly used for:
+- **Anonymous attacks** - Hiding the attacker's true location
+- **Credential stuffing** - Testing stolen credentials anonymously
+- **Scanning and reconnaissance** - Automated attacks through Tor network
+- **Policy violations** - Many organizations block Tor traffic
+
+### Example Usage
+
+```bash
+# Identify Tor-based login attempts
+ipdigger --enrich-abuseipdb --detect-login /var/log/auth.log
+
+# Find Tor exit nodes with high abuse scores
+ipdigger --enrich-abuseipdb --top-20 --no-private /var/log/auth.log
+
+# Export Tor activity for analysis
+ipdigger --enrich-abuseipdb --output-json /var/log/auth.log | jq '.statistics[] | select(.enrichment.isTor == "Yes")'
+```
+
+The `isTor` field in the output will show "Yes" for Tor exit nodes and "No" for regular IPs.
+
 ## Configuration
 
 Create `~/.ipdigger/settings.conf` for API keys and caching:
@@ -283,13 +379,19 @@ cache_dir = ~/.ipdigger/cache
 cache_ttl_hours = 24
 
 [maxmind]
-account_id = YOUR_ACCOUNT_ID
-license_key = YOUR_LICENSE_KEY
+account_id = YOUR_ACCOUNT_ID          # Free account at maxmind.com
+license_key = YOUR_LICENSE_KEY        # Required for GeoIP enrichment
 db_dir = ~/.ipdigger/maxmind
 
 [abuseipdb]
-api_key = YOUR_API_KEY
+api_key = YOUR_API_KEY                # Free tier: 1000 requests/day at abuseipdb.com
 ```
+
+### API Keys
+
+**MaxMind GeoIP**: Free account at [maxmind.com](https://www.maxmind.com/en/geolite2/signup) - provides country, city, and ASN data
+
+**AbuseIPDB**: Free tier (1000 requests/day) at [abuseipdb.com](https://www.abuseipdb.com/api) - provides abuse scores, reports, usage type, ISP, and Tor exit node detection
 
 ## Use Cases
 
@@ -297,12 +399,30 @@ api_key = YOUR_API_KEY
 ```bash
 # Find top attackers with threat intel
 ipdigger --detect-login --enrich-abuseipdb --top-20 --no-private /var/log/auth.log
+
+# Identify Tor exit node activity
+ipdigger --enrich-abuseipdb --detect-login /var/log/auth.log
+
+# Filter and analyze non-EU attacks with Tor detection
+ipdigger --geo-filter-none-eu --enrich-abuseipdb --detect-login --top-10 /var/log/auth.log
 ```
 
 **Abuse Reporting:**
 ```bash
 # Get abuse contacts for suspicious IPs
 ipdigger --enrich-whois --detect-login --top-10 /var/log/auth.log
+```
+
+**Network Monitoring:**
+```bash
+# Check host availability and response times
+ipdigger --enrich-ping --top-20 /var/log/nginx/access.log
+
+# Identify dead or unresponsive IPs
+ipdigger --enrich-ping --detect-login /var/log/auth.log
+
+# Combined network analysis with geo data
+ipdigger --enrich-geo --enrich-ping --top-10 /var/log/nginx/access.log
 ```
 
 **Geographic Analysis:**

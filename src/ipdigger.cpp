@@ -576,7 +576,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
             for (const auto& [key, value] : stat.enrichment->data) {
                 if (enrich_widths.find(key) == enrich_widths.end()) {
                     enrich_fields.push_back(key);
-                    enrich_widths[key] = key.length();
+                    // Use custom display name length for ping field
+                    size_t header_len = (key == "ping") ? std::string("Ping / Alive").length() : key.length();
+                    enrich_widths[key] = header_len;
                 }
                 enrich_widths[key] = std::max(enrich_widths[key], value.length());
             }
@@ -619,7 +621,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
         std::cout << " | " << std::left << std::setw(login_width) << "Login";
     }
     for (const auto& field : enrich_fields) {
-        std::cout << " | " << std::left << std::setw(enrich_widths[field]) << field;
+        // Use custom display name for ping field
+        std::string display_name = (field == "ping") ? "Ping / Alive" : field;
+        std::cout << " | " << std::left << std::setw(enrich_widths[field]) << display_name;
     }
     std::cout << " |\n";
     std::cout << separator << "\n";
