@@ -55,6 +55,20 @@ std::vector<std::string> extract_ip_addresses(const std::string& line);
 bool is_private_ip(const std::string& ip);
 
 /**
+ * Check if a country code belongs to the EU
+ * @param country_code Two-letter ISO country code
+ * @return true if the country is an EU member state, false otherwise
+ */
+bool is_eu_country(const std::string& country_code);
+
+/**
+ * Check if a country code belongs to GDPR-compliant regions
+ * @param country_code Two-letter ISO country code
+ * @return true if the country is GDPR-compliant (EU + EEA + UK + CH), false otherwise
+ */
+bool is_gdpr_country(const std::string& country_code);
+
+/**
  * Detect login status from a line of text
  * @param line The text line to parse
  * @return "failed" if failure keywords found, "success" otherwise

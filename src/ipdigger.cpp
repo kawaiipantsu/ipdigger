@@ -113,6 +113,48 @@ bool is_private_ip(const std::string& ip) {
     return false;
 }
 
+bool is_eu_country(const std::string& country_code) {
+    // EU member states (27 countries as of 2024)
+    static const std::set<std::string> eu_countries = {
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE",
+        "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV",
+        "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
+        "SI", "ES", "SE"
+    };
+
+    // Case-insensitive matching
+    std::string upper_cc = country_code;
+    std::transform(upper_cc.begin(), upper_cc.end(), upper_cc.begin(), ::toupper);
+
+    return eu_countries.count(upper_cc) > 0;
+}
+
+bool is_gdpr_country(const std::string& country_code) {
+    // GDPR-compliant regions: EU27 + EEA (IS, LI, NO) + UK + Switzerland
+    // Total: 32 countries
+    static const std::set<std::string> gdpr_countries = {
+        // EU member states (27 countries)
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE",
+        "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV",
+        "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
+        "SI", "ES", "SE",
+        // EEA non-EU members (3 countries)
+        "IS",  // Iceland
+        "LI",  // Liechtenstein
+        "NO",  // Norway
+        // UK (post-Brexit, UK GDPR)
+        "GB",
+        // Switzerland (data adequacy decision)
+        "CH"
+    };
+
+    // Case-insensitive matching
+    std::string upper_cc = country_code;
+    std::transform(upper_cc.begin(), upper_cc.end(), upper_cc.begin(), ::toupper);
+
+    return gdpr_countries.count(upper_cc) > 0;
+}
+
 std::string detect_login_status(const std::string& line) {
     // Convert line to lowercase for case-insensitive matching
     std::string lower_line = line;

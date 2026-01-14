@@ -29,6 +29,8 @@ void print_usage(const char* program_name) {
     std::cout << "  --enrich-whois     Enrich IPs with WHOIS data (netname, abuse, CIDR, admin)\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
     std::cout << "  --no-private       Exclude private/local network addresses from output\n";
+    std::cout << "  --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)\n";
+    std::cout << "  --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)\n";
     std::cout << "  --top-10           Show only top 10 IPs by count\n";
     std::cout << "  --top-20           Show only top 20 IPs by count\n";
     std::cout << "  --top-50           Show only top 50 IPs by count\n";
@@ -44,6 +46,8 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --enrich-whois /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n";
     std::cout << "  " << program_name << " --top-20 --output-json \"/var/log/*.log\"\n";
     std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n\n";
     std::cout << "Configuration:\n";
@@ -85,6 +89,8 @@ int main(int argc, char* argv[]) {
     bool enable_whois = false;
     bool no_private = false;
     bool detect_login = false;
+    bool geo_filter_none_eu = false;
+    bool geo_filter_none_gdpr = false;
     size_t top_n = 0;  // 0 means show all
     std::string filename;
 
@@ -119,6 +125,10 @@ int main(int argc, char* argv[]) {
             top_n = 50;
         } else if (arg == "--top-100") {
             top_n = 100;
+        } else if (arg == "--geo-filter-none-eu") {
+            geo_filter_none_eu = true;
+        } else if (arg == "--geo-filter-none-gdpr") {
+            geo_filter_none_gdpr = true;
         } else if (arg[0] == '-') {
             std::cerr << "Error: Unknown option '" << arg << "'\n";
             std::cerr << "Use --help for usage information\n";
@@ -138,6 +148,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: No filename specified\n";
         print_usage(argv[0]);
         return 1;
+    }
+
+    // Auto-enable geo enrichment if geo filtering is requested
+    if (geo_filter_none_eu || geo_filter_none_gdpr) {
+        enable_geo = true;
     }
 
     try {
@@ -242,6 +257,66 @@ int main(int argc, char* argv[]) {
             if (enable_whois) {
                 ipdigger::enrich_whois_stats(stats, config);
             }
+        }
+
+        // Apply EU geo-filtering if requested
+        if (geo_filter_none_eu) {
+            std::map<std::string, ipdigger::IPStats> filtered_stats;
+            size_t skipped_count = 0;
+
+            for (const auto& [ip, stat] : stats) {
+                // Check if enrichment data exists and has country code
+                bool is_eu = false;
+
+                if (stat.enrichment && stat.enrichment->data.count("cc")) {
+                    std::string country_code = stat.enrichment->data.at("cc");
+                    is_eu = ipdigger::is_eu_country(country_code);
+                }
+                // IPs without country codes are included (benefit of doubt)
+
+                if (!is_eu) {
+                    filtered_stats[ip] = stat;
+                } else {
+                    skipped_count++;
+                }
+            }
+
+            // Show filtering info (only in non-JSON mode)
+            if (!output_json && skipped_count > 0) {
+                std::cerr << "Filtered out " << skipped_count << " EU IP(s)\n";
+            }
+
+            stats = filtered_stats;
+        }
+
+        // Apply GDPR geo-filtering if requested
+        if (geo_filter_none_gdpr) {
+            std::map<std::string, ipdigger::IPStats> filtered_stats;
+            size_t skipped_count = 0;
+
+            for (const auto& [ip, stat] : stats) {
+                // Check if enrichment data exists and has country code
+                bool is_gdpr = false;
+
+                if (stat.enrichment && stat.enrichment->data.count("cc")) {
+                    std::string country_code = stat.enrichment->data.at("cc");
+                    is_gdpr = ipdigger::is_gdpr_country(country_code);
+                }
+                // IPs without country codes are included (benefit of doubt)
+
+                if (!is_gdpr) {
+                    filtered_stats[ip] = stat;
+                } else {
+                    skipped_count++;
+                }
+            }
+
+            // Show filtering info (only in non-JSON mode)
+            if (!output_json && skipped_count > 0) {
+                std::cerr << "Filtered out " << skipped_count << " GDPR-compliant region IP(s)\n";
+            }
+
+            stats = filtered_stats;
         }
 
         // Display results (always use statistics output)
