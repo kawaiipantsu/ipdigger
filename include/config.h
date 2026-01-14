@@ -39,6 +39,10 @@ struct Config {
     size_t parallel_requests;   // Max concurrent API requests
     size_t rdns_threads;        // Number of threads for reverse DNS lookups
 
+    // Performance settings
+    size_t parsing_threads;     // Number of threads for file parsing (0 = auto-detect)
+    size_t chunk_size_mb;       // Chunk size in MB for parallel parsing
+
     // Cache settings
     std::string cache_dir;      // Cache directory path
     size_t cache_ttl_hours;     // Cache time-to-live in hours

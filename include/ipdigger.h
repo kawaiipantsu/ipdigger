@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <ctime>
+#include "regex_cache.h"
 
 namespace ipdigger {
 
@@ -45,9 +46,10 @@ struct IPStats {
 /**
  * Extract IP addresses (IPv4 and IPv6) from a line of text
  * @param line The text line to parse
+ * @param cache Pre-compiled regex patterns for performance
  * @return Vector of IP addresses found
  */
-std::vector<std::string> extract_ip_addresses(const std::string& line);
+std::vector<std::string> extract_ip_addresses(const std::string& line, const RegexCache& cache);
 
 /**
  * Check if an IP address is private/local
@@ -82,32 +84,51 @@ std::string detect_login_status(const std::string& line);
  * Supports common formats: ISO8601, RFC3339, Apache/Nginx logs, syslog
  * @param line The text line to parse
  * @param timestamp Output parameter for parsed timestamp
+ * @param cache Pre-compiled regex patterns for performance
  * @return Date string if found, empty string otherwise
  */
-std::string extract_date(const std::string& line, time_t& timestamp);
+std::string extract_date(const std::string& line, time_t& timestamp, const RegexCache& cache);
 
 /**
  * Parse a file and extract all IP entries
  * @param filename Path to file to parse
+ * @param cache Pre-compiled regex patterns for performance
  * @param show_progress Show progress bar for large files
  * @param detect_login Detect login status from log lines
  * @param search_string Optional literal string to search for (empty = no search)
  * @param search_regex Optional regex pattern to search for (empty = no search)
  * @return Vector of IPEntry objects
  */
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress = false, bool detect_login = false,
+std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress = false, bool detect_login = false,
                                  const std::string& search_string = "", const std::string& search_regex = "");
+
+/**
+ * Parse a file with parallel processing (for large files)
+ * @param filename Path to file to parse
+ * @param cache Pre-compiled regex patterns for performance
+ * @param show_progress Show progress bar for large files
+ * @param detect_login Detect login status from log lines
+ * @param search_string Optional literal string to search for (empty = no search)
+ * @param search_regex Optional regex pattern to search for (empty = no search)
+ * @param num_threads Number of threads to use
+ * @param min_chunk_size_mb Minimum chunk size in MB
+ * @return Vector of IPEntry objects
+ */
+std::vector<IPEntry> parse_file_parallel(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,
+                                          const std::string& search_string, const std::string& search_regex,
+                                          size_t num_threads, size_t min_chunk_size_mb);
 
 /**
  * Parse multiple files and extract all IP entries
  * @param filenames Vector of file paths to parse
+ * @param cache Pre-compiled regex patterns for performance
  * @param show_progress Show progress bar for large files
  * @param detect_login Detect login status from log lines
  * @param search_string Optional literal string to search for (empty = no search)
  * @param search_regex Optional regex pattern to search for (empty = no search)
  * @return Vector of IPEntry objects from all files
  */
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress = false, bool detect_login = false,
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, const RegexCache& cache, bool show_progress = false, bool detect_login = false,
                                   const std::string& search_string = "", const std::string& search_regex = "");
 
 /**
@@ -155,6 +176,12 @@ void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_sea
  * @return Version string
  */
 std::string get_version();
+
+/**
+ * Get global regex cache (thread-safe singleton)
+ * @return Reference to the global regex cache
+ */
+const RegexCache& get_regex_cache();
 
 } // namespace ipdigger
 

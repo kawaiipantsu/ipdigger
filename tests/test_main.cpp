@@ -8,25 +8,27 @@
 void test_extract_ipv4() {
     std::cout << "Testing IPv4 extraction...\n";
 
-    auto ips = ipdigger::extract_ip_addresses("Connection from 192.168.1.1 port 22");
+    const auto& cache = ipdigger::get_regex_cache();
+
+    auto ips = ipdigger::extract_ip_addresses("Connection from 192.168.1.1 port 22", cache);
     assert(ips.size() == 1);
     assert(ips[0] == "192.168.1.1");
 
-    ips = ipdigger::extract_ip_addresses("10.0.0.1 connected to 10.0.0.2");
+    ips = ipdigger::extract_ip_addresses("10.0.0.1 connected to 10.0.0.2", cache);
     assert(ips.size() == 2);
     assert(ips[0] == "10.0.0.1");
     assert(ips[1] == "10.0.0.2");
 
-    ips = ipdigger::extract_ip_addresses("No IP addresses here");
+    ips = ipdigger::extract_ip_addresses("No IP addresses here", cache);
     assert(ips.empty());
 
-    ips = ipdigger::extract_ip_addresses("Edge cases: 255.255.255.255 and 0.0.0.0");
+    ips = ipdigger::extract_ip_addresses("Edge cases: 255.255.255.255 and 0.0.0.0", cache);
     assert(ips.size() == 2);
     assert(ips[0] == "255.255.255.255");
     assert(ips[1] == "0.0.0.0");
 
     // Invalid IPs should not match
-    ips = ipdigger::extract_ip_addresses("Invalid: 256.1.1.1 and 1.2.3.999");
+    ips = ipdigger::extract_ip_addresses("Invalid: 256.1.1.1 and 1.2.3.999", cache);
     assert(ips.empty());
 
     std::cout << "  ✓ All IPv4 extraction tests passed\n";
@@ -35,11 +37,13 @@ void test_extract_ipv4() {
 void test_extract_ipv6() {
     std::cout << "Testing IPv6 extraction...\n";
 
-    auto ips = ipdigger::extract_ip_addresses("IPv6: 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+    const auto& cache = ipdigger::get_regex_cache();
+
+    auto ips = ipdigger::extract_ip_addresses("IPv6: 2001:0db8:85a3:0000:0000:8a2e:0370:7334", cache);
     assert(ips.size() == 1);
     assert(ips[0] == "2001:0db8:85a3:0000:0000:8a2e:0370:7334");
 
-    ips = ipdigger::extract_ip_addresses("Compressed: ::1 and ::ffff:192.0.2.1");
+    ips = ipdigger::extract_ip_addresses("Compressed: ::1 and ::ffff:192.0.2.1", cache);
     assert(ips.size() >= 1);  // Should find at least one
 
     std::cout << "  ✓ All IPv6 extraction tests passed\n";
@@ -48,27 +52,28 @@ void test_extract_ipv6() {
 void test_extract_date() {
     std::cout << "Testing date extraction...\n";
 
+    const auto& cache = ipdigger::get_regex_cache();
     time_t timestamp;
 
     // ISO 8601 format
-    std::string date = ipdigger::extract_date("2024-01-13T12:34:56Z some log entry", timestamp);
+    std::string date = ipdigger::extract_date("2024-01-13T12:34:56Z some log entry", timestamp, cache);
     assert(!date.empty());
     assert(date.find("2024") != std::string::npos);
 
     // Apache log format
-    date = ipdigger::extract_date("[13/Jan/2024:12:34:56 +0000] GET /index.html", timestamp);
+    date = ipdigger::extract_date("[13/Jan/2024:12:34:56 +0000] GET /index.html", timestamp, cache);
     assert(!date.empty());
 
     // Syslog format
-    date = ipdigger::extract_date("Jan 13 12:34:56 server sshd[1234]: message", timestamp);
+    date = ipdigger::extract_date("Jan 13 12:34:56 server sshd[1234]: message", timestamp, cache);
     assert(!date.empty());
 
     // Common format
-    date = ipdigger::extract_date("2024-01-13 12:34:56 INFO: Application started", timestamp);
+    date = ipdigger::extract_date("2024-01-13 12:34:56 INFO: Application started", timestamp, cache);
     assert(!date.empty());
 
     // No date
-    date = ipdigger::extract_date("No date in this line", timestamp);
+    date = ipdigger::extract_date("No date in this line", timestamp, cache);
     assert(date.empty());
     assert(timestamp == 0);
 
@@ -77,6 +82,8 @@ void test_extract_date() {
 
 void test_parse_file() {
     std::cout << "Testing file parsing...\n";
+
+    const auto& cache = ipdigger::get_regex_cache();
 
     // Create a test file
     std::string test_file = "test_log.txt";
@@ -88,7 +95,7 @@ void test_parse_file() {
     out << "2024-01-13 10:15:00 Multiple: 172.16.0.1 and 172.16.0.2\n";
     out.close();
 
-    auto entries = ipdigger::parse_file(test_file);
+    auto entries = ipdigger::parse_file(test_file, cache);
 
     assert(entries.size() == 5);  // 5 IP addresses total
     assert(entries[0].ip_address == "192.168.1.100");

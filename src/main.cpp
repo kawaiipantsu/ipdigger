@@ -3,6 +3,7 @@
 #include <cstring>
 #include <set>
 #include <algorithm>
+#include <thread>
 #include "ipdigger.h"
 #include "config.h"
 #include "enrichment.h"
@@ -38,6 +39,8 @@ void print_usage(const char* program_name) {
     std::cout << "  --top-20           Show only top 20 IPs by count\n";
     std::cout << "  --top-50           Show only top 50 IPs by count\n";
     std::cout << "  --top-100          Show only top 100 IPs by count\n";
+    std::cout << "  --single-threaded  Force single-threaded parsing (disables parallelism)\n";
+    std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
     std::cout << "  --version          Display version information\n\n";
     std::cout << "Examples:\n";
@@ -98,6 +101,8 @@ int main(int argc, char* argv[]) {
     bool detect_login = false;
     bool geo_filter_none_eu = false;
     bool geo_filter_none_gdpr = false;
+    bool single_threaded = false;
+    size_t num_threads = config.parsing_threads;  // 0 = auto-detect
     size_t top_n = 0;  // 0 means show all
     std::string search_string;
     std::string search_regex;
@@ -152,6 +157,23 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             search_regex = argv[++i];
+        } else if (arg == "--single-threaded") {
+            single_threaded = true;
+        } else if (arg == "--threads") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --threads requires a number argument\n";
+                return 1;
+            }
+            try {
+                num_threads = std::stoul(argv[++i]);
+                if (num_threads == 0) {
+                    std::cerr << "Error: --threads must be at least 1 (or omit for auto-detect)\n";
+                    return 1;
+                }
+            } catch (...) {
+                std::cerr << "Error: --threads requires a valid number\n";
+                return 1;
+            }
         } else if (arg[0] == '-') {
             std::cerr << "Error: Unknown option '" << arg << "'\n";
             std::cerr << "Use --help for usage information\n";
@@ -178,7 +200,22 @@ int main(int argc, char* argv[]) {
         enable_geo = true;
     }
 
+    // Determine actual thread count
+    size_t actual_threads = 1;
+    if (!single_threaded) {
+        if (num_threads == 0) {
+            // Auto-detect CPU cores
+            unsigned int hw_threads = std::thread::hardware_concurrency();
+            actual_threads = (hw_threads > 0) ? hw_threads : 4;  // Fallback to 4
+        } else {
+            actual_threads = num_threads;
+        }
+    }
+
     try {
+        // Get pre-compiled regex cache for performance
+        const auto& cache = ipdigger::get_regex_cache();
+
         // Expand glob pattern to get list of files
         auto files = ipdigger::expand_glob(filename);
 
@@ -190,12 +227,23 @@ int main(int argc, char* argv[]) {
         // Parse all files (show progress if not in JSON mode)
         bool show_progress = !output_json;
         std::vector<ipdigger::IPEntry> entries;
+
         if (files.size() == 1) {
-            // Single file - use direct parsing for better error messages
-            entries = ipdigger::parse_file(files[0], show_progress, detect_login, search_string, search_regex);
+            // Single file - use parallel parsing for large files
+            if (actual_threads > 1) {
+                entries = ipdigger::parse_file_parallel(
+                    files[0], cache, show_progress, detect_login,
+                    search_string, search_regex, actual_threads, config.chunk_size_mb
+                );
+            } else {
+                // Single-threaded
+                entries = ipdigger::parse_file(files[0], cache, show_progress, detect_login,
+                                              search_string, search_regex);
+            }
         } else {
-            // Multiple files - use multi-file parser with error handling
-            entries = ipdigger::parse_files(files, show_progress, detect_login, search_string, search_regex);
+            // Multiple files - use multi-file parallel parser
+            entries = ipdigger::parse_files(files, cache, show_progress, detect_login,
+                                           search_string, search_regex);
         }
 
         // Filter out private IPs if requested

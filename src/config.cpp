@@ -24,6 +24,10 @@ Config::Config() {
     parallel_requests = 3;
     rdns_threads = 4;
 
+    // Performance settings
+    parsing_threads = 0;      // 0 = auto-detect CPU cores
+    chunk_size_mb = 10;       // 10MB chunks for parallel parsing
+
     // Cache settings
     cache_dir = get_config_directory() + "/cache";
     cache_ttl_hours = 24;
@@ -102,6 +106,10 @@ bool create_example_config(const std::string& config_path) {
     file << "# Enrichment settings\n";
     file << "parallel_requests = 3        # Max concurrent API requests\n";
     file << "rdns_threads = 4             # Number of threads for reverse DNS lookups\n\n";
+    file << "[performance]\n";
+    file << "# Performance optimization settings\n";
+    file << "parsing_threads = 0          # Number of threads for file parsing (0 = auto-detect CPU cores)\n";
+    file << "chunk_size_mb = 10           # Chunk size in MB for parallel parsing of large files\n\n";
     file << "[cache]\n";
     file << "# Cache configuration\n";
     file << "cache_dir = ~/.ipdigger/cache\n";
@@ -308,6 +316,26 @@ Config load_config_from_file(const std::string& config_path) {
                 try {
                     config.rdns_threads = std::stoul(enrich["rdns_threads"]);
                     if (config.rdns_threads == 0) config.rdns_threads = 1;  // At least 1 thread
+                } catch (...) {
+                    // Keep default
+                }
+            }
+        }
+
+        // Parse [performance] section
+        if (ini_data.count("performance")) {
+            auto& perf = ini_data["performance"];
+            if (perf.count("parsing_threads")) {
+                try {
+                    config.parsing_threads = std::stoul(perf["parsing_threads"]);
+                } catch (...) {
+                    // Keep default
+                }
+            }
+            if (perf.count("chunk_size_mb")) {
+                try {
+                    config.chunk_size_mb = std::stoul(perf["chunk_size_mb"]);
+                    if (config.chunk_size_mb == 0) config.chunk_size_mb = 1;  // At least 1 MB
                 } catch (...) {
                     // Keep default
                 }

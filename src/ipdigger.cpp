@@ -1,5 +1,7 @@
 #include "ipdigger.h"
 #include "enrichment.h"
+#include "regex_cache.h"
+#include "progress.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -8,6 +10,10 @@
 #include <iomanip>
 #include <cstring>
 #include <set>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <vector>
 #include <glob.h>
 #include <sys/stat.h>
 
@@ -17,16 +23,15 @@ std::string get_version() {
     return "1.3.0";
 }
 
-std::vector<std::string> extract_ip_addresses(const std::string& line) {
-    std::vector<std::string> ip_addresses;
-
-    // IPv4 regex pattern - matches valid IPv4 addresses
-    std::regex ipv4_pattern(
+// RegexCache implementation
+RegexCache::RegexCache() {
+    // Pre-compile IPv4 pattern
+    ipv4_pattern = std::regex(
         R"(\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b)"
     );
 
-    // IPv6 regex pattern - simplified but covers most common cases
-    std::regex ipv6_pattern(
+    // Pre-compile IPv6 pattern
+    ipv6_pattern = std::regex(
         R"(\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|)"
         R"(\b(?:[0-9a-fA-F]{1,4}:){1,7}:\b|)"
         R"(\b(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}\b|)"
@@ -35,15 +40,43 @@ std::vector<std::string> extract_ip_addresses(const std::string& line) {
         R"(\b::ffff:(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b)"
     );
 
-    // Extract IPv4 addresses
-    auto ipv4_begin = std::sregex_iterator(line.begin(), line.end(), ipv4_pattern);
+    // Pre-compile all date patterns
+    date_patterns = {
+        // Common format: 2024-01-13 12:34:56
+        {std::regex(R"((\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}))"), "%Y-%m-%d %H:%M:%S"},
+
+        // ISO 8601 / RFC3339: 2024-01-13T12:34:56
+        {std::regex(R"((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}))"), "%Y-%m-%dT%H:%M:%S"},
+
+        // Apache/Nginx common log: [13/Jan/2024:12:34:56 +0000]
+        {std::regex(R"(\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}))"), "%d/%b/%Y:%H:%M:%S"},
+
+        // Syslog format: Jan 13 12:34:56
+        {std::regex(R"((\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}))"), "%b %d %H:%M:%S"},
+
+        // Date only: 2024-01-13
+        {std::regex(R"((\d{4}-\d{2}-\d{2}))"), "%Y-%m-%d"},
+    };
+}
+
+// Thread-safe global regex cache
+const RegexCache& get_regex_cache() {
+    static RegexCache cache;  // Thread-safe in C++11+
+    return cache;
+}
+
+std::vector<std::string> extract_ip_addresses(const std::string& line, const RegexCache& cache) {
+    std::vector<std::string> ip_addresses;
+
+    // Extract IPv4 addresses using pre-compiled pattern
+    auto ipv4_begin = std::sregex_iterator(line.begin(), line.end(), cache.ipv4_pattern);
     auto ipv4_end = std::sregex_iterator();
     for (std::sregex_iterator i = ipv4_begin; i != ipv4_end; ++i) {
         ip_addresses.push_back(i->str());
     }
 
-    // Extract IPv6 addresses
-    auto ipv6_begin = std::sregex_iterator(line.begin(), line.end(), ipv6_pattern);
+    // Extract IPv6 addresses using pre-compiled pattern
+    auto ipv6_begin = std::sregex_iterator(line.begin(), line.end(), cache.ipv6_pattern);
     auto ipv6_end = std::sregex_iterator();
     for (std::sregex_iterator i = ipv6_begin; i != ipv6_end; ++i) {
         ip_addresses.push_back(i->str());
@@ -211,30 +244,12 @@ std::string detect_login_status(const std::string& line) {
     return "success";
 }
 
-std::string extract_date(const std::string& line, time_t& timestamp) {
+std::string extract_date(const std::string& line, time_t& timestamp, const RegexCache& cache) {
     timestamp = 0;
 
-    // Try multiple date formats - patterns tested in order
-    std::vector<std::pair<std::string, std::string>> patterns = {
-        // Common format: 2024-01-13 12:34:56
-        {R"((\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}))", "%Y-%m-%d %H:%M:%S"},
-
-        // ISO 8601 / RFC3339: 2024-01-13T12:34:56
-        {R"((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}))", "%Y-%m-%dT%H:%M:%S"},
-
-        // Apache/Nginx common log: [13/Jan/2024:12:34:56 +0000]
-        {R"(\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}))", "%d/%b/%Y:%H:%M:%S"},
-
-        // Syslog format: Jan 13 12:34:56
-        {R"((\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}))", "%b %d %H:%M:%S"},
-
-        // Date only: 2024-01-13
-        {R"((\d{4}-\d{2}-\d{2}))", "%Y-%m-%d"},
-    };
-
-    for (const auto& [pattern_str, format] : patterns) {
+    // Try pre-compiled date patterns in order
+    for (const auto& [pattern, format] : cache.date_patterns) {
         try {
-            std::regex pattern(pattern_str);
             std::smatch match;
             if (std::regex_search(line, match, pattern)) {
                 std::string date_str = match[1].str();
@@ -258,23 +273,277 @@ std::string extract_date(const std::string& line, time_t& timestamp) {
     return "";
 }
 
-// Helper function to display parsing progress
-static void display_parse_progress(size_t bytes_read, size_t file_size, const std::string& filename) {
-    int bar_width = 40;
-    float progress = static_cast<float>(bytes_read) / file_size;
-    int pos = static_cast<int>(bar_width * progress);
+// Chunk information for parallel parsing
+struct ChunkInfo {
+    size_t start_offset;      // Byte offset where chunk starts
+    size_t end_offset;        // Byte offset where chunk ends
+    size_t start_line_number; // Line number at start of chunk
+};
 
-    std::cerr << "\rParsing " << filename << "... [";
-    for (int i = 0; i < bar_width; ++i) {
-        if (i < pos) std::cerr << "=";
-        else if (i == pos) std::cerr << ">";
-        else std::cerr << " ";
+// Calculate chunk boundaries for parallel parsing
+static std::vector<ChunkInfo> calculate_chunks(const std::string& filename, size_t num_chunks, size_t min_chunk_size_mb) {
+    std::vector<ChunkInfo> chunks;
+
+    // Get file size
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return chunks;  // Return empty if can't open
     }
-    std::cerr << "] " << static_cast<int>(progress * 100) << "%";
-    std::cerr.flush();
+
+    size_t file_size = file.tellg();
+    file.seekg(0);
+
+    // Minimum chunk size (e.g., 10MB)
+    size_t min_chunk_size = min_chunk_size_mb * 1024 * 1024;
+
+    // If file is too small for chunking, return single chunk
+    if (file_size < min_chunk_size * 2) {
+        ChunkInfo chunk;
+        chunk.start_offset = 0;
+        chunk.end_offset = file_size;
+        chunk.start_line_number = 1;
+        chunks.push_back(chunk);
+        return chunks;
+    }
+
+    // Calculate ideal chunk size
+    size_t chunk_size = file_size / num_chunks;
+    if (chunk_size < min_chunk_size) {
+        chunk_size = min_chunk_size;
+        num_chunks = (file_size + chunk_size - 1) / chunk_size;
+    }
+
+    // Calculate chunk boundaries, adjusting for line boundaries
+    size_t current_offset = 0;
+    size_t current_line = 1;
+
+    for (size_t i = 0; i < num_chunks; ++i) {
+        ChunkInfo chunk;
+        chunk.start_offset = current_offset;
+        chunk.start_line_number = current_line;
+
+        // Calculate tentative end offset
+        size_t tentative_end = current_offset + chunk_size;
+        if (tentative_end >= file_size) {
+            // Last chunk goes to end of file
+            chunk.end_offset = file_size;
+        } else {
+            // Seek to tentative end and find next newline
+            file.seekg(tentative_end);
+            std::string line;
+            std::getline(file, line);  // Read to next newline
+            chunk.end_offset = file.tellg();
+
+            // If we hit EOF, use file size
+            if (file.eof()) {
+                chunk.end_offset = file_size;
+            }
+        }
+
+        chunks.push_back(chunk);
+
+        // Update for next chunk
+        current_offset = chunk.end_offset;
+
+        // Count lines in this chunk to update line number
+        // This is approximate - we'll recalculate during actual parsing
+        if (i < num_chunks - 1) {
+            // For line number tracking, we'll handle it during parsing
+            current_line = 0;  // Will be calculated during parsing
+        }
+
+        if (current_offset >= file_size) {
+            break;
+        }
+    }
+
+    file.close();
+    return chunks;
 }
 
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress, bool detect_login,
+// Parse a single chunk of a file
+static std::vector<IPEntry> parse_chunk(
+    const std::string& filename,
+    const ChunkInfo& chunk,
+    const RegexCache& cache,
+    bool detect_login,
+    const std::string& search_string,
+    const std::string& search_regex,
+    ProgressTracker& progress
+) {
+    std::vector<IPEntry> entries;
+    std::ifstream file(filename, std::ios::binary);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file: " + filename);
+    }
+
+    // Compile regex pattern if search_regex is provided
+    std::regex regex_pattern;
+    bool use_regex = !search_regex.empty();
+    if (use_regex) {
+        try {
+            regex_pattern = std::regex(search_regex, std::regex::icase);
+        } catch (const std::regex_error& e) {
+            throw std::runtime_error("Invalid regex pattern: " + std::string(e.what()));
+        }
+    }
+    bool use_search = !search_string.empty();
+
+    // Seek to chunk start
+    file.seekg(chunk.start_offset);
+
+    std::string line;
+    size_t line_number = chunk.start_line_number;
+    size_t bytes_read = chunk.start_offset;
+    size_t lines_processed = 0;
+
+    // Read lines until we reach chunk end
+    while (bytes_read < chunk.end_offset && std::getline(file, line)) {
+        line_number++;
+        lines_processed++;
+        size_t line_bytes = line.length() + 1;
+        bytes_read += line_bytes;
+
+        // Extract IP addresses using pre-compiled patterns
+        auto ip_addresses = extract_ip_addresses(line, cache);
+
+        if (ip_addresses.empty()) {
+            progress.add_bytes(line_bytes);
+            // Only update display every 1000 lines to reduce overhead
+            if (lines_processed % 1000 == 0) {
+                progress.display();
+            }
+            continue;
+        }
+
+        // Extract date using pre-compiled patterns
+        time_t timestamp;
+        std::string date_str = extract_date(line, timestamp, cache);
+
+        // Detect login status if requested
+        std::string login_status = "";
+        if (detect_login) {
+            login_status = detect_login_status(line);
+        }
+
+        // Check if line matches search criteria
+        bool line_matches = false;
+        if (use_regex) {
+            line_matches = std::regex_search(line, regex_pattern);
+        } else if (use_search) {
+            std::string lower_line = line;
+            std::string lower_search = search_string;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+            std::transform(lower_search.begin(), lower_search.end(), lower_search.begin(), ::tolower);
+            line_matches = (lower_line.find(lower_search) != std::string::npos);
+        } else {
+            line_matches = true;
+        }
+
+        // Create entries for each IP
+        for (const auto& ip : ip_addresses) {
+            IPEntry entry;
+            entry.ip_address = ip;
+            entry.date_string = date_str;
+            entry.filename = filename;
+            entry.login_status = login_status;
+            entry.line_number = line_number;
+            entry.timestamp = timestamp;
+            entry.matches_search = line_matches;
+            entries.push_back(entry);
+        }
+
+        progress.add_bytes(line_bytes);
+        // Only update display every 1000 lines to reduce overhead
+        if (lines_processed % 1000 == 0) {
+            progress.display();
+        }
+    }
+
+    return entries;
+}
+
+// Parallel file parsing for large files
+std::vector<IPEntry> parse_file_parallel(
+    const std::string& filename,
+    const RegexCache& cache,
+    bool show_progress,
+    bool detect_login,
+    const std::string& search_string,
+    const std::string& search_regex,
+    size_t num_threads,
+    size_t min_chunk_size_mb
+) {
+    // Calculate chunks
+    auto chunks = calculate_chunks(filename, num_threads, min_chunk_size_mb);
+
+    if (chunks.empty()) {
+        throw std::runtime_error("Failed to calculate chunks for: " + filename);
+    }
+
+    // If only one chunk, use regular parsing
+    if (chunks.size() == 1) {
+        return parse_file(filename, cache, show_progress, detect_login, search_string, search_regex);
+    }
+
+    // Get file size for progress tracking
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+    size_t file_size = file.tellg();
+    file.close();
+
+    // Initialize progress tracker
+    ProgressTracker progress;
+    progress.init(file_size, show_progress, filename);
+
+    // Thread-safe result storage
+    std::vector<std::vector<IPEntry>> chunk_results(chunks.size());
+    std::atomic<size_t> chunk_index(0);
+
+    // Worker function
+    auto worker = [&]() {
+        while (true) {
+            size_t idx = chunk_index.fetch_add(1);
+            if (idx >= chunks.size()) break;
+
+            try {
+                chunk_results[idx] = parse_chunk(
+                    filename, chunks[idx], cache, detect_login,
+                    search_string, search_regex, progress
+                );
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: Error parsing chunk " << idx << ": " << e.what() << "\n";
+                chunk_results[idx] = std::vector<IPEntry>();
+            }
+        }
+    };
+
+    // Launch threads
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    for (size_t i = 0; i < num_threads; ++i) {
+        threads.emplace_back(worker);
+    }
+
+    // Wait for completion
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    // Merge results in order
+    std::vector<IPEntry> all_entries;
+    for (const auto& chunk_entries : chunk_results) {
+        all_entries.insert(all_entries.end(), chunk_entries.begin(), chunk_entries.end());
+    }
+
+    // Final progress update
+    progress.finish();
+
+    return all_entries;
+}
+
+std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,
                                  const std::string& search_string, const std::string& search_regex) {
     std::vector<IPEntry> entries;
     std::ifstream file(filename);
@@ -295,40 +564,34 @@ std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress,
         throw std::runtime_error("Failed to open file: " + filename);
     }
 
-    // Get file size for progress tracking (only show progress for files > 10KB)
-    size_t file_size = 0;
-    bool should_show_progress = false;
-    if (show_progress) {
-        file.seekg(0, std::ios::end);
-        file_size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        should_show_progress = (file_size > 10240);  // 10KB minimum
-    }
+    // Get file size and initialize progress tracker
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    ProgressTracker progress;
+    progress.init(file_size, show_progress, filename);
 
     std::string line;
     size_t line_number = 0;
-    size_t bytes_read = 0;
-    size_t last_progress_update = 0;
 
     while (std::getline(file, line)) {
         line_number++;
-        bytes_read += line.length() + 1;  // +1 for newline
+        size_t line_bytes = line.length() + 1;  // +1 for newline
 
-        // Extract all IP addresses from this line
-        auto ip_addresses = extract_ip_addresses(line);
+        // Extract all IP addresses from this line using pre-compiled patterns
+        auto ip_addresses = extract_ip_addresses(line, cache);
 
         if (ip_addresses.empty()) {
             // Update progress even if no IPs found
-            if (should_show_progress && file_size > 0 && bytes_read - last_progress_update > file_size / 100) {
-                display_parse_progress(bytes_read, file_size, filename);
-                last_progress_update = bytes_read;
-            }
+            progress.add_bytes(line_bytes);
+            progress.display();
             continue;
         }
 
-        // Extract date from this line
+        // Extract date from this line using pre-compiled patterns
         time_t timestamp;
-        std::string date_str = extract_date(line, timestamp);
+        std::string date_str = extract_date(line, timestamp, cache);
 
         // Detect login status if requested
         std::string login_status = "";
@@ -365,18 +628,13 @@ std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress,
             entries.push_back(entry);
         }
 
-        // Update progress periodically (every 1% of file)
-        if (should_show_progress && file_size > 0 && bytes_read - last_progress_update > file_size / 100) {
-            display_parse_progress(bytes_read, file_size, filename);
-            last_progress_update = bytes_read;
-        }
+        // Update progress
+        progress.add_bytes(line_bytes);
+        progress.display();
     }
 
     // Final progress update
-    if (should_show_progress && file_size > 0) {
-        display_parse_progress(file_size, file_size, filename);
-        std::cerr << "\n";
-    }
+    progress.finish();
 
     return entries;
 }
@@ -417,21 +675,83 @@ std::vector<std::string> expand_glob(const std::string& pattern) {
     return files;
 }
 
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress, bool detect_login,
-                                  const std::string& search_string, const std::string& search_regex) {
+// Helper function: Parallel file processing
+static std::vector<IPEntry> parse_files_parallel(
+    const std::vector<std::string>& filenames,
+    const RegexCache& cache,
+    bool show_progress,
+    bool detect_login,
+    const std::string& search_string,
+    const std::string& search_regex,
+    size_t num_threads
+) {
     std::vector<IPEntry> all_entries;
+    std::mutex entries_mutex;
+    std::atomic<size_t> file_index(0);
+    std::atomic<size_t> files_completed(0);
 
-    for (const auto& filename : filenames) {
-        try {
-            auto entries = parse_file(filename, show_progress, detect_login, search_string, search_regex);
-            all_entries.insert(all_entries.end(), entries.begin(), entries.end());
-        } catch (const std::exception& e) {
-            // Log error but continue with other files
-            std::cerr << "Warning: " << e.what() << "\n";
+    // Worker function
+    auto worker = [&]() {
+        while (true) {
+            size_t idx = file_index.fetch_add(1);
+            if (idx >= filenames.size()) break;
+
+            try {
+                // Parse file (progress shown per-file)
+                auto entries = parse_file(filenames[idx], cache, show_progress, detect_login,
+                                         search_string, search_regex);
+
+                // Merge results (thread-safe)
+                {
+                    std::lock_guard<std::mutex> lock(entries_mutex);
+                    all_entries.insert(all_entries.end(), entries.begin(), entries.end());
+                }
+
+                files_completed.fetch_add(1);
+            } catch (const std::exception& e) {
+                // Log error but continue with other files
+                std::cerr << "Warning: " << e.what() << "\n";
+                files_completed.fetch_add(1);
+            }
         }
+    };
+
+    // Launch thread pool
+    size_t actual_threads = std::min(num_threads, filenames.size());
+    std::vector<std::thread> threads;
+    threads.reserve(actual_threads);
+
+    for (size_t i = 0; i < actual_threads; ++i) {
+        threads.emplace_back(worker);
+    }
+
+    // Wait for completion
+    for (auto& t : threads) {
+        t.join();
     }
 
     return all_entries;
+}
+
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, const RegexCache& cache, bool show_progress, bool detect_login,
+                                  const std::string& search_string, const std::string& search_regex) {
+    // For single file, use direct parsing
+    if (filenames.size() == 1) {
+        try {
+            return parse_file(filenames[0], cache, show_progress, detect_login, search_string, search_regex);
+        } catch (const std::exception& e) {
+            std::cerr << "Warning: " << e.what() << "\n";
+            return std::vector<IPEntry>();
+        }
+    }
+
+    // For multiple files, use parallel processing
+    // Auto-detect CPU cores
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    size_t num_threads = (hw_threads > 0) ? hw_threads : 4;
+
+    return parse_files_parallel(filenames, cache, show_progress, detect_login,
+                               search_string, search_regex, num_threads);
 }
 
 std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& entries) {
