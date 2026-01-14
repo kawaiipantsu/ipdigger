@@ -20,7 +20,7 @@
 namespace ipdigger {
 
 std::string get_version() {
-    return "1.3.0";
+    return "2.0.0";
 }
 
 // RegexCache implementation

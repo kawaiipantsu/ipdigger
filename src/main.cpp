@@ -11,8 +11,8 @@
 void print_usage(const char* program_name) {
     std::cout << "\n";
     std::cout << "     ___________ ____________\n";
-    std::cout << "    |           )._______.-'\n";
-    std::cout << "    `----------'\n";
+    std::cout << "    |     +      )._______.-'\n";
+    std::cout << "     `----------'\n";
     std::cout << "\n";
     std::cout << "       IP Digger v" << ipdigger::get_version() << "\n";
     std::cout << "  Your swiss armyknife tool for IP addresses\n";
@@ -67,8 +67,8 @@ void print_usage(const char* program_name) {
 void print_version() {
     std::cout << "\n";
     std::cout << "     ___________ ____________\n";
-    std::cout << "    |           )._______.-'\n";
-    std::cout << "    `----------'\n";
+    std::cout << "    |     +      )._______.-'\n";
+    std::cout << "     `----------'\n";
     std::cout << "\n";
     std::cout << "       IP Digger v" << ipdigger::get_version() << "\n";
     std::cout << "  Your swiss armyknife tool for IP addresses\n";

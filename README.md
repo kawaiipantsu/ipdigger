@@ -2,10 +2,10 @@
 
 ```
      ___________ ____________
-    |           )._______.-'
-    `----------'
+    |     +      )._______.-'
+     `----------'
 
-       IP Digger v1.3.0
+       IP Digger v2.0.0
   Your swiss armyknife tool for IP addresses
 
          by kawaiipantsu
@@ -35,8 +35,8 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/kawaiipantsu/ipdigger/releases/download/v1.3.0/ipdigger_1.3.0_amd64.deb
-sudo dpkg -i ipdigger_1.3.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.0.0/ipdigger_2.0.0_amd64.deb
+sudo dpkg -i ipdigger_2.0.0_amd64.deb
 ```
 
 ### From Source
