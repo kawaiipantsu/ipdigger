@@ -22,6 +22,7 @@ struct IPEntry {
     std::string login_status;  // "success", "failed", or empty if not detected
     size_t line_number;
     time_t timestamp;  // Parsed timestamp, 0 if no date found
+    bool matches_search;  // Whether this entry matches search criteria
     std::shared_ptr<EnrichmentData> enrichment;  // Optional enrichment data
 };
 
@@ -35,6 +36,7 @@ struct IPStats {
     size_t count;
     size_t login_success_count;  // Count of successful logins
     size_t login_failed_count;   // Count of failed logins
+    size_t search_hits;  // Count of lines matching search criteria
     time_t first_timestamp;
     time_t last_timestamp;
     std::shared_ptr<EnrichmentData> enrichment;  // Optional enrichment data
@@ -89,18 +91,24 @@ std::string extract_date(const std::string& line, time_t& timestamp);
  * @param filename Path to file to parse
  * @param show_progress Show progress bar for large files
  * @param detect_login Detect login status from log lines
+ * @param search_string Optional literal string to search for (empty = no search)
+ * @param search_regex Optional regex pattern to search for (empty = no search)
  * @return Vector of IPEntry objects
  */
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress = false, bool detect_login = false);
+std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress = false, bool detect_login = false,
+                                 const std::string& search_string = "", const std::string& search_regex = "");
 
 /**
  * Parse multiple files and extract all IP entries
  * @param filenames Vector of file paths to parse
  * @param show_progress Show progress bar for large files
  * @param detect_login Detect login status from log lines
+ * @param search_string Optional literal string to search for (empty = no search)
+ * @param search_regex Optional regex pattern to search for (empty = no search)
  * @return Vector of IPEntry objects from all files
  */
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress = false, bool detect_login = false);
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress = false, bool detect_login = false,
+                                  const std::string& search_string = "", const std::string& search_regex = "");
 
 /**
  * Expand glob pattern to list of files
@@ -125,8 +133,9 @@ void print_table(const std::vector<IPEntry>& entries);
 /**
  * Print statistics as ASCII table
  * @param stats Map of IP statistics
+ * @param show_search_hits Whether to display SearchHits column (default: false)
  */
-void print_stats_table(const std::map<std::string, IPStats>& stats);
+void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_search_hits = false);
 
 /**
  * Print entries as JSON
@@ -137,8 +146,9 @@ void print_json(const std::vector<IPEntry>& entries);
 /**
  * Print statistics as JSON
  * @param stats Map of IP statistics
+ * @param show_search_hits Whether to include search_hits field (default: false)
  */
-void print_stats_json(const std::map<std::string, IPStats>& stats);
+void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_search_hits = false);
 
 /**
  * Get version information

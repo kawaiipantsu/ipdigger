@@ -14,7 +14,7 @@
 namespace ipdigger {
 
 std::string get_version() {
-    return "1.2.0";
+    return "1.3.0";
 }
 
 std::vector<std::string> extract_ip_addresses(const std::string& line) {
@@ -274,9 +274,22 @@ static void display_parse_progress(size_t bytes_read, size_t file_size, const st
     std::cerr.flush();
 }
 
-std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress, bool detect_login) {
+std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress, bool detect_login,
+                                 const std::string& search_string, const std::string& search_regex) {
     std::vector<IPEntry> entries;
     std::ifstream file(filename);
+
+    // Compile regex pattern if search_regex is provided
+    std::regex regex_pattern;
+    bool use_regex = !search_regex.empty();
+    if (use_regex) {
+        try {
+            regex_pattern = std::regex(search_regex, std::regex::icase);
+        } catch (const std::regex_error& e) {
+            throw std::runtime_error("Invalid regex pattern: " + std::string(e.what()));
+        }
+    }
+    bool use_search = !search_string.empty();
 
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open file: " + filename);
@@ -323,6 +336,22 @@ std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress,
             login_status = detect_login_status(line);
         }
 
+        // Check if line matches search criteria
+        bool line_matches = false;
+        if (use_regex) {
+            line_matches = std::regex_search(line, regex_pattern);
+        } else if (use_search) {
+            // Case-insensitive literal search
+            std::string lower_line = line;
+            std::string lower_search = search_string;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+            std::transform(lower_search.begin(), lower_search.end(), lower_search.begin(), ::tolower);
+            line_matches = (lower_line.find(lower_search) != std::string::npos);
+        } else {
+            // No search criteria, all lines match
+            line_matches = true;
+        }
+
         // Create an entry for each IP address found on this line
         for (const auto& ip : ip_addresses) {
             IPEntry entry;
@@ -332,6 +361,7 @@ std::vector<IPEntry> parse_file(const std::string& filename, bool show_progress,
             entry.login_status = login_status;
             entry.line_number = line_number;
             entry.timestamp = timestamp;
+            entry.matches_search = line_matches;
             entries.push_back(entry);
         }
 
@@ -387,12 +417,13 @@ std::vector<std::string> expand_glob(const std::string& pattern) {
     return files;
 }
 
-std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress, bool detect_login) {
+std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, bool show_progress, bool detect_login,
+                                  const std::string& search_string, const std::string& search_regex) {
     std::vector<IPEntry> all_entries;
 
     for (const auto& filename : filenames) {
         try {
-            auto entries = parse_file(filename, show_progress, detect_login);
+            auto entries = parse_file(filename, show_progress, detect_login, search_string, search_regex);
             all_entries.insert(all_entries.end(), entries.begin(), entries.end());
         } catch (const std::exception& e) {
             // Log error but continue with other files
@@ -419,6 +450,7 @@ std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& e
             stat.count = 1;
             stat.login_success_count = 0;
             stat.login_failed_count = 0;
+            stat.search_hits = 0;
         } else {
             // Subsequent occurrence
             stat.count++;
@@ -443,6 +475,11 @@ std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& e
             stat.login_success_count++;
         } else if (entry.login_status == "failed") {
             stat.login_failed_count++;
+        }
+
+        // Count search hits
+        if (entry.matches_search) {
+            stat.search_hits++;
         }
     }
 
@@ -553,7 +590,7 @@ void print_table(const std::vector<IPEntry>& entries) {
     std::cout << "\n";
 }
 
-void print_stats_table(const std::map<std::string, IPStats>& stats) {
+void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
     if (stats.empty()) {
         std::cout << "No IP addresses found.\n";
         return;
@@ -590,6 +627,7 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
     size_t first_width = 19;
     size_t last_width = 19;
     size_t count_width = 5;
+    size_t search_hits_width = 10;  // "SearchHits"
     size_t login_width = 12;  // "OK: 5 F: 10"
 
     for (const auto& [ip, stat] : stats) {
@@ -601,10 +639,16 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
             last_width = std::max(last_width, stat.last_seen.length());
         }
         count_width = std::max(count_width, std::to_string(stat.count).length());
+        if (show_search_hits) {
+            search_hits_width = std::max(search_hits_width, std::to_string(stat.search_hits).length());
+        }
     }
 
     // Print header
     size_t separator_width = ip_width + first_width + last_width + count_width + 13;
+    if (show_search_hits) {
+        separator_width += search_hits_width + 3;
+    }
     if (has_login_data) {
         separator_width += login_width + 3;
     }
@@ -617,6 +661,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
               << " | " << std::setw(first_width) << "First Seen"
               << " | " << std::setw(last_width) << "Last Seen"
               << " | " << std::right << std::setw(count_width) << "Count";
+    if (show_search_hits) {
+        std::cout << " | " << std::right << std::setw(search_hits_width) << "SearchHits";
+    }
     if (has_login_data) {
         std::cout << " | " << std::left << std::setw(login_width) << "Login";
     }
@@ -644,6 +691,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats) {
                   << " | " << std::setw(last_width)
                   << (stat.last_seen.empty() ? "(no date)" : stat.last_seen)
                   << " | " << std::right << std::setw(count_width) << stat.count;
+        if (show_search_hits) {
+            std::cout << " | " << std::right << std::setw(search_hits_width) << stat.search_hits;
+        }
         if (has_login_data) {
             std::string login_str = "OK:" + std::to_string(stat.login_success_count) +
                                    " F:" + std::to_string(stat.login_failed_count);
@@ -756,7 +806,7 @@ void print_json(const std::vector<IPEntry>& entries) {
     std::cout << "}\n";
 }
 
-void print_stats_json(const std::map<std::string, IPStats>& stats) {
+void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
     // Convert to vector for sorting by count (descending)
     std::vector<IPStats> sorted_stats;
     for (const auto& [ip, stat] : stats) {
@@ -791,6 +841,11 @@ void print_stats_json(const std::map<std::string, IPStats>& stats) {
         std::cout << "      \"last_timestamp\": " << stat.last_timestamp << ",\n";
         std::cout << "      \"login_success_count\": " << stat.login_success_count << ",\n";
         std::cout << "      \"login_failed_count\": " << stat.login_failed_count;
+
+        if (show_search_hits) {
+            std::cout << ",\n";
+            std::cout << "      \"search_hits\": " << stat.search_hits;
+        }
 
         // Add enrichment data if present
         if (stat.enrichment && !stat.enrichment->data.empty()) {

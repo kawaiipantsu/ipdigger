@@ -5,7 +5,7 @@
     |           )._______.-'
     `----------'
 
-       IP Digger v1.2.0
+       IP Digger v1.3.0
   Your swiss armyknife tool for IP addresses
 
          by kawaiipantsu
@@ -19,6 +19,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 - 🔍 **IP Extraction**: IPv4 and IPv6 from any log format
 - 📊 **Statistics**: Count, first/last seen per IP
+- 🔎 **Search**: Filter logs by literal strings or regex patterns with hit counts per IP
 - 🌍 **GeoIP**: MaxMind country/city/ASN data
 - 🔐 **Login Detection**: Track authentication success/failures
 - 🛡️ **Threat Intel**: AbuseIPDB abuse scoring & Tor exit node detection
@@ -33,8 +34,8 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/kawaiipantsu/ipdigger/releases/download/v1.2.0/ipdigger_1.2.0_amd64.deb
-sudo dpkg -i ipdigger_1.2.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v1.3.0/ipdigger_1.3.0_amd64.deb
+sudo dpkg -i ipdigger_1.3.0_amd64.deb
 ```
 
 ### From Source
@@ -73,6 +74,9 @@ ipdigger --geo-filter-none-eu /var/log/auth.log
 # Check host availability
 ipdigger --enrich-ping --top-10 /var/log/nginx/access.log
 
+# Search for specific patterns
+ipdigger --search "Failed password" /var/log/auth.log
+
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
          --detect-login --top-10 --output-json /var/log/auth.log
@@ -95,6 +99,8 @@ Enrichment:
 
 Analysis:
   --detect-login     Detect and track login attempts (success/failed)
+  --search <string>  Filter lines by literal string and count hits per IP
+  --search-regex <pattern> Filter lines by regex pattern and count hits per IP
 
 Filtering:
   --no-private           Exclude private/local network addresses
@@ -199,6 +205,31 @@ The ping feature:
 - **Average ping time** - Mean response time over 3 ping attempts
 - **Jitter** - Variation in response times (mdev/stddev)
 - **DEAD status** - Shown for unreachable or unresponsive hosts
+
+### Search Filtering
+```bash
+# Search for specific patterns and count hits per IP
+ipdigger --search "Failed password" /var/log/auth.log
+```
+```
+| IP Address   | Count | SearchHits |
+|-------------|-------|------------|
+| 203.0.113.45|     8 |          8 |
+| 8.8.8.8     |    15 |          3 |
+| 1.1.1.1     |     5 |          0 |
+```
+
+```bash
+# Use regex patterns for advanced filtering
+ipdigger --search-regex "error|warning|critical" /var/log/nginx/error.log
+```
+
+The search feature:
+- **--search** - Case-insensitive literal string matching
+- **--search-regex** - Case-insensitive regex pattern matching
+- **SearchHits column** - Shows count of lines matching the search criteria per IP
+- **Count vs SearchHits** - Count shows total lines per IP, SearchHits shows matching lines
+- **Filtering behavior** - All IPs are shown, but SearchHits highlights matching activity
 
 ### JSON Output
 ```bash
@@ -411,6 +442,21 @@ ipdigger --geo-filter-none-eu --enrich-abuseipdb --detect-login --top-10 /var/lo
 ```bash
 # Get abuse contacts for suspicious IPs
 ipdigger --enrich-whois --detect-login --top-10 /var/log/auth.log
+```
+
+**Log Analysis:**
+```bash
+# Find IPs associated with specific error messages
+ipdigger --search "Failed password" /var/log/auth.log
+
+# Search for multiple patterns using regex
+ipdigger --search-regex "error|warning|critical" /var/log/nginx/error.log
+
+# Combine search with geo-filtering and enrichment
+ipdigger --search "Failed password" --geo-filter-none-eu --enrich-geo /var/log/auth.log
+
+# Find specific attack patterns
+ipdigger --search-regex "SQL injection|XSS|RCE" --enrich-abuseipdb --top-20 /var/log/web.log
 ```
 
 **Network Monitoring:**

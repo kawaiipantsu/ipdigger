@@ -29,6 +29,8 @@ void print_usage(const char* program_name) {
     std::cout << "  --enrich-whois     Enrich IPs with WHOIS data (netname, abuse, CIDR, admin)\n";
     std::cout << "  --enrich-ping      Enrich IPs with ping response time and availability\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
+    std::cout << "  --search <string>  Filter lines by literal string (case-insensitive) and count hits per IP\n";
+    std::cout << "  --search-regex <pattern> Filter lines by regex pattern (case-insensitive) and count hits per IP\n";
     std::cout << "  --no-private       Exclude private/local network addresses from output\n";
     std::cout << "  --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)\n";
     std::cout << "  --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)\n";
@@ -46,6 +48,8 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-whois /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-ping /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --search \"Failed password\" /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --search-regex \"error|warning\" /var/log/nginx/error.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
@@ -95,6 +99,8 @@ int main(int argc, char* argv[]) {
     bool geo_filter_none_eu = false;
     bool geo_filter_none_gdpr = false;
     size_t top_n = 0;  // 0 means show all
+    std::string search_string;
+    std::string search_regex;
     std::string filename;
 
     for (int i = 1; i < argc; i++) {
@@ -134,6 +140,18 @@ int main(int argc, char* argv[]) {
             geo_filter_none_eu = true;
         } else if (arg == "--geo-filter-none-gdpr") {
             geo_filter_none_gdpr = true;
+        } else if (arg == "--search") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --search requires a search string argument\n";
+                return 1;
+            }
+            search_string = argv[++i];
+        } else if (arg == "--search-regex") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --search-regex requires a regex pattern argument\n";
+                return 1;
+            }
+            search_regex = argv[++i];
         } else if (arg[0] == '-') {
             std::cerr << "Error: Unknown option '" << arg << "'\n";
             std::cerr << "Use --help for usage information\n";
@@ -174,10 +192,10 @@ int main(int argc, char* argv[]) {
         std::vector<ipdigger::IPEntry> entries;
         if (files.size() == 1) {
             // Single file - use direct parsing for better error messages
-            entries = ipdigger::parse_file(files[0], show_progress, detect_login);
+            entries = ipdigger::parse_file(files[0], show_progress, detect_login, search_string, search_regex);
         } else {
             // Multiple files - use multi-file parser with error handling
-            entries = ipdigger::parse_files(files, show_progress, detect_login);
+            entries = ipdigger::parse_files(files, show_progress, detect_login, search_string, search_regex);
         }
 
         // Filter out private IPs if requested
@@ -329,10 +347,11 @@ int main(int argc, char* argv[]) {
         }
 
         // Display results (always use statistics output)
+        bool search_active = !search_string.empty() || !search_regex.empty();
         if (output_json) {
-            ipdigger::print_stats_json(stats);
+            ipdigger::print_stats_json(stats, search_active);
         } else {
-            ipdigger::print_stats_table(stats);
+            ipdigger::print_stats_table(stats, search_active);
         }
 
         return 0;
