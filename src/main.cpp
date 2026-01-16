@@ -33,12 +33,13 @@ void print_usage(const char* program_name) {
     std::cout << "  --search <string>  Filter lines by literal string (case-insensitive) and count hits per IP\n";
     std::cout << "  --search-regex <pattern> Filter lines by regex pattern (case-insensitive) and count hits per IP\n";
     std::cout << "  --no-private       Exclude private/local network addresses from output\n";
+    std::cout << "  --no-reserved      Exclude reserved IP addresses (private, loopback, multicast, etc.)\n";
+    std::cout << "  --no-ipv4          Exclude IPv4 addresses\n";
+    std::cout << "  --no-ipv6          Exclude IPv6 addresses\n";
     std::cout << "  --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)\n";
     std::cout << "  --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)\n";
-    std::cout << "  --top-10           Show only top 10 IPs by count\n";
-    std::cout << "  --top-20           Show only top 20 IPs by count\n";
-    std::cout << "  --top-50           Show only top 50 IPs by count\n";
-    std::cout << "  --top-100          Show only top 100 IPs by count\n";
+    std::cout << "  --top-limit <N>    Show only top N IPs sorted by count\n";
+    std::cout << "  --limit <N>        Show only latest N entries\n";
     std::cout << "  --single-threaded  Force single-threaded parsing (disables parallelism)\n";
     std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
@@ -54,10 +55,11 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --search \"Failed password\" /var/log/auth.log\n";
     std::cout << "  " << program_name << " --search-regex \"error|warning\" /var/log/nginx/error.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-limit 10 /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --top-20 --output-json \"/var/log/*.log\"\n";
+    std::cout << "  " << program_name << " --top-limit 20 --output-json \"/var/log/*.log\"\n";
+    std::cout << "  " << program_name << " --limit 100 /var/log/auth.log\n";
     std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n\n";
     std::cout << "Configuration:\n";
     std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
@@ -98,12 +100,16 @@ int main(int argc, char* argv[]) {
     bool enable_whois = false;
     bool enable_ping = false;
     bool no_private = false;
+    bool no_reserved = false;
+    bool no_ipv4 = false;
+    bool no_ipv6 = false;
     bool detect_login = false;
     bool geo_filter_none_eu = false;
     bool geo_filter_none_gdpr = false;
     bool single_threaded = false;
     size_t num_threads = config.parsing_threads;  // 0 = auto-detect
-    size_t top_n = 0;  // 0 means show all
+    size_t top_limit = 0;  // 0 means show all (sorted by count)
+    size_t limit = 0;  // 0 means show all (latest entries)
     std::string search_string;
     std::string search_regex;
     std::string filename;
@@ -131,16 +137,36 @@ int main(int argc, char* argv[]) {
             enable_ping = true;
         } else if (arg == "--no-private") {
             no_private = true;
+        } else if (arg == "--no-reserved") {
+            no_reserved = true;
+        } else if (arg == "--no-ipv4") {
+            no_ipv4 = true;
+        } else if (arg == "--no-ipv6") {
+            no_ipv6 = true;
         } else if (arg == "--detect-login") {
             detect_login = true;
-        } else if (arg == "--top-10") {
-            top_n = 10;
-        } else if (arg == "--top-20") {
-            top_n = 20;
-        } else if (arg == "--top-50") {
-            top_n = 50;
-        } else if (arg == "--top-100") {
-            top_n = 100;
+        } else if (arg == "--top-limit") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --top-limit requires a number argument\n";
+                return 1;
+            }
+            try {
+                top_limit = std::stoull(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: --top-limit requires a valid number\n";
+                return 1;
+            }
+        } else if (arg == "--limit") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --limit requires a number argument\n";
+                return 1;
+            }
+            try {
+                limit = std::stoull(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: --limit requires a valid number\n";
+                return 1;
+            }
         } else if (arg == "--geo-filter-none-eu") {
             geo_filter_none_eu = true;
         } else if (arg == "--geo-filter-none-gdpr") {
@@ -257,9 +283,42 @@ int main(int argc, char* argv[]) {
             entries = filtered_entries;
         }
 
-        // Apply top N filtering if requested
+        // Filter out reserved IPs if requested
+        if (no_reserved) {
+            std::vector<ipdigger::IPEntry> filtered_entries;
+            for (const auto& entry : entries) {
+                if (!ipdigger::is_reserved_ip(entry.ip_address)) {
+                    filtered_entries.push_back(entry);
+                }
+            }
+            entries = filtered_entries;
+        }
+
+        // Filter out IPv4 if requested
+        if (no_ipv4) {
+            std::vector<ipdigger::IPEntry> filtered_entries;
+            for (const auto& entry : entries) {
+                if (!ipdigger::is_ipv4(entry.ip_address)) {
+                    filtered_entries.push_back(entry);
+                }
+            }
+            entries = filtered_entries;
+        }
+
+        // Filter out IPv6 if requested
+        if (no_ipv6) {
+            std::vector<ipdigger::IPEntry> filtered_entries;
+            for (const auto& entry : entries) {
+                if (!ipdigger::is_ipv6(entry.ip_address)) {
+                    filtered_entries.push_back(entry);
+                }
+            }
+            entries = filtered_entries;
+        }
+
+        // Apply top-limit filtering if requested (filter by top N IPs sorted by count)
         std::set<std::string> top_ips;
-        if (top_n > 0) {
+        if (top_limit > 0) {
             // Generate statistics to get counts
             auto stats = ipdigger::generate_statistics(entries);
 
@@ -276,7 +335,7 @@ int main(int argc, char* argv[]) {
             // Take top N by count
             size_t count = 0;
             for (const auto& stat : sorted_stats) {
-                if (count >= top_n) break;
+                if (count >= top_limit) break;
                 top_ips.insert(stat.ip_address);
                 count++;
             }
@@ -289,6 +348,15 @@ int main(int argc, char* argv[]) {
                 }
             }
             entries = filtered_entries;
+        }
+
+        // Apply limit filtering if requested (take latest entries)
+        if (limit > 0 && entries.size() > limit) {
+            // Take the last N entries (latest ones)
+            entries = std::vector<ipdigger::IPEntry>(
+                entries.end() - limit,
+                entries.end()
+            );
         }
 
         if (entries.empty()) {

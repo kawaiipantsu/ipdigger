@@ -59,6 +59,27 @@ std::vector<std::string> extract_ip_addresses(const std::string& line, const Reg
 bool is_private_ip(const std::string& ip);
 
 /**
+ * Check if an IP address is reserved (private, loopback, multicast, broadcast, etc.)
+ * @param ip The IP address to check
+ * @return true if the IP is in a reserved range, false otherwise
+ */
+bool is_reserved_ip(const std::string& ip);
+
+/**
+ * Check if an IP address is IPv4
+ * @param ip The IP address to check
+ * @return true if the IP is IPv4, false otherwise
+ */
+bool is_ipv4(const std::string& ip);
+
+/**
+ * Check if an IP address is IPv6
+ * @param ip The IP address to check
+ * @return true if the IP is IPv6, false otherwise
+ */
+bool is_ipv6(const std::string& ip);
+
+/**
  * Check if a country code belongs to the EU
  * @param country_code Two-letter ISO country code
  * @return true if the country is an EU member state, false otherwise

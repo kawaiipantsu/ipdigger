@@ -146,6 +146,100 @@ bool is_private_ip(const std::string& ip) {
     return false;
 }
 
+bool is_ipv4(const std::string& ip) {
+    // IPv4 contains dots but not colons
+    return (ip.find('.') != std::string::npos && ip.find(':') == std::string::npos);
+}
+
+bool is_ipv6(const std::string& ip) {
+    // IPv6 contains colons
+    return (ip.find(':') != std::string::npos);
+}
+
+bool is_reserved_ip(const std::string& ip) {
+    // Check for IPv4 reserved addresses
+    if (is_ipv4(ip)) {
+        unsigned int a, b, c, d;
+        if (sscanf(ip.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+            // Check ranges
+            if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+
+            // 0.0.0.0/8 - "This network"
+            if (a == 0) return true;
+
+            // 10.0.0.0/8 - Private
+            if (a == 10) return true;
+
+            // 127.0.0.0/8 - Loopback
+            if (a == 127) return true;
+
+            // 169.254.0.0/16 - Link-local
+            if (a == 169 && b == 254) return true;
+
+            // 172.16.0.0/12 - Private
+            if (a == 172 && b >= 16 && b <= 31) return true;
+
+            // 192.168.0.0/16 - Private
+            if (a == 192 && b == 168) return true;
+
+            // 192.0.2.0/24 - Documentation (TEST-NET-1)
+            if (a == 192 && b == 0 && c == 2) return true;
+
+            // 198.51.100.0/24 - Documentation (TEST-NET-2)
+            if (a == 198 && b == 51 && c == 100) return true;
+
+            // 203.0.113.0/24 - Documentation (TEST-NET-3)
+            if (a == 203 && b == 0 && c == 113) return true;
+
+            // 224.0.0.0/4 - Multicast (224-239)
+            if (a >= 224 && a <= 239) return true;
+
+            // 240.0.0.0/4 - Reserved for future use (240-255)
+            if (a >= 240) return true;
+        }
+        return false;
+    }
+
+    // Check for IPv6 reserved addresses
+    if (is_ipv6(ip)) {
+        std::string lower_ip = ip;
+        std::transform(lower_ip.begin(), lower_ip.end(), lower_ip.begin(), ::tolower);
+
+        // :: or ::0 - Unspecified address
+        if (lower_ip == "::" || lower_ip == "::0") return true;
+
+        // ::1 - Loopback
+        if (lower_ip == "::1") return true;
+
+        // fe80::/10 - Link-local (starts with fe8, fe9, fea, or feb)
+        if (lower_ip.substr(0, 3) == "fe8" ||
+            lower_ip.substr(0, 3) == "fe9" ||
+            lower_ip.substr(0, 3) == "fea" ||
+            lower_ip.substr(0, 3) == "feb") return true;
+
+        // fc00::/7 - Unique local (private) - starts with fc or fd
+        if (lower_ip.substr(0, 2) == "fc" || lower_ip.substr(0, 2) == "fd") return true;
+
+        // ff00::/8 - Multicast
+        if (lower_ip.substr(0, 2) == "ff") return true;
+
+        // 2001:db8::/32 - Documentation
+        if (lower_ip.substr(0, 9) == "2001:db8:" || lower_ip.substr(0, 8) == "2001:db8") return true;
+
+        // ::ffff:x.x.x.x - IPv4-mapped IPv6
+        if (lower_ip.find("::ffff:") == 0) {
+            // Extract the IPv4 part and check if it's reserved
+            size_t ipv4_start = lower_ip.find_last_of(':') + 1;
+            if (ipv4_start != std::string::npos) {
+                std::string ipv4_part = lower_ip.substr(ipv4_start);
+                return is_reserved_ip(ipv4_part);
+            }
+        }
+    }
+
+    return false;
+}
+
 bool is_eu_country(const std::string& country_code) {
     // EU member states (27 countries as of 2024)
     static const std::set<std::string> eu_countries = {
