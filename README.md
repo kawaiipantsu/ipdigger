@@ -20,14 +20,17 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 🔍 **IP Extraction**: IPv4 and IPv6 from any log format
 - 📊 **Statistics**: Count, first/last seen per IP
 - 🔎 **Search**: Filter logs by literal strings or regex patterns with hit counts per IP
-- 🌍 **GeoIP**: MaxMind country/city/ASN data
+- 🌍 **GeoIP**: MaxMind country/city/ASN data with latitude/longitude
+- 🗺️ **Map Visualization**: Export GeoJSON for mapping tools (Leaflet, Mapbox, QGIS)
 - 🔐 **Login Detection**: Track authentication success/failures
 - 🛡️ **Threat Intel**: AbuseIPDB abuse scoring & Tor exit node detection
 - 📋 **WHOIS**: Network ownership and abuse contacts
 - 🌐 **Reverse DNS**: Hostname resolution
 - 🏓 **Ping Detection**: Response time measurement and host availability
-- 🎯 **Filtering**: Private IPs, top N IPs, geographic filtering (EU/GDPR regions)
-- 📦 **Formats**: ASCII tables or JSON output
+- 🔒 **TLS/SSL**: Certificate information (CN, issuer, dates, version, key size)
+- 🌐 **HTTP Detection**: Web server discovery (port, status, server, CSP, title)
+- 🎯 **Filtering**: Reserved IPs, IPv4/IPv6, top N IPs, geographic filtering (EU/GDPR regions)
+- 📦 **Formats**: ASCII tables, JSON output, or GeoJSON map
 - ⚡ **High Performance**: Multi-threaded parsing for large files (1GB+) with progress bar and ETA
 - 🔒 **Secure**: Full security hardening (PIE, RELRO, stack protection)
 
@@ -67,20 +70,26 @@ ipdigger "/var/log/*.log"
 ipdigger --enrich-geo --enrich-whois /var/log/auth.log
 
 # Find top attackers
-ipdigger --detect-login --top-20 --no-private /var/log/auth.log
+ipdigger --detect-login --top-limit 20 --no-private /var/log/auth.log
 
 # Geographic filtering (non-EU traffic)
 ipdigger --geo-filter-none-eu /var/log/auth.log
 
+# Create interactive map visualization
+ipdigger --enrich-geo --output-geomap /var/log/auth.log > map.geojson
+
+# Check TLS certificates and HTTP servers
+ipdigger --enrich-tls --enrich-http --top-limit 10 /var/log/nginx/access.log
+
 # Check host availability
-ipdigger --enrich-ping --top-10 /var/log/nginx/access.log
+ipdigger --enrich-ping --top-limit 10 /var/log/nginx/access.log
 
 # Search for specific patterns
 ipdigger --search "Failed password" /var/log/auth.log
 
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
-         --detect-login --top-10 --output-json /var/log/auth.log
+         --detect-login --top-limit 10 --output-json /var/log/auth.log
 ```
 
 ## Performance
@@ -131,8 +140,9 @@ The progress bar displays:
 ```
 Usage: ipdigger [OPTIONS] <filename>
 
-Options:
+Output Formats:
   --output-json      Output in JSON format
+  --output-geomap    Output as GeoJSON map (requires --enrich-geo)
 
 Enrichment:
   --enrich-geo       Enrich with geolocation data (MaxMind)
@@ -140,6 +150,9 @@ Enrichment:
   --enrich-abuseipdb Enrich with AbuseIPDB threat intelligence
   --enrich-whois     Enrich with WHOIS data (netname, abuse, CIDR, admin)
   --enrich-ping      Enrich with ping response time and availability
+  --enrich-tls       Enrich with TLS certificate data (CN, issuer, dates, version, keysize)
+  --enrich-http      Enrich with HTTP server data (port, status, server, CSP, title)
+  --follow-redirects Follow HTTP redirects when using --enrich-http
 
 Analysis:
   --detect-login     Detect and track login attempts (success/failed)
@@ -148,12 +161,13 @@ Analysis:
 
 Filtering:
   --no-private           Exclude private/local network addresses
+  --no-reserved          Exclude reserved IP addresses (private, loopback, multicast, etc.)
+  --no-ipv4              Exclude IPv4 addresses
+  --no-ipv6              Exclude IPv6 addresses
   --geo-filter-none-eu   Filter to show only IPs outside the EU (auto-enables --enrich-geo)
   --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)
-  --top-10               Show only top 10 IPs by count
-  --top-20               Show only top 20 IPs by count
-  --top-50               Show only top 50 IPs by count
-  --top-100              Show only top 100 IPs by count
+  --top-limit <N>        Show only top N IPs sorted by count
+  --limit <N>            Show only latest N entries
 
 Performance:
   --single-threaded      Force single-threaded parsing (disables parallelism)
@@ -201,7 +215,7 @@ ipdigger --enrich-whois /var/log/auth.log
 
 ### GeoIP + Threat Intelligence
 ```bash
-ipdigger --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log
+ipdigger --enrich-geo --enrich-abuseipdb --top-limit 10 /var/log/auth.log
 ```
 ```
 | IP Address   | Country | City      | abuseScore | totalReports | isTor |
@@ -209,6 +223,36 @@ ipdigger --enrich-geo --enrich-abuseipdb --top-10 /var/log/auth.log
 | 45.67.89.12 | CN      | Shanghai  | 95        | 247         | No    |
 | 23.45.67.89 | RU      | Moscow    | 87        | 156         | Yes   |
 ```
+
+### TLS Certificate Detection
+```bash
+ipdigger --enrich-tls --top-limit 10 /var/log/nginx/access.log
+```
+```
+| IP Address   | CN              | Issuer        | Created       | Expires       | TLS Ver | KeySize |
+|-------------|-----------------|---------------|---------------|---------------|---------|---------|
+| 203.0.113.5 | example.com     | Let's Encrypt | 01/15/2026... | 04/15/2026... | TLSv1.3 | 2048    |
+| 198.51.100.1| secure.site.com | DigiCert      | 12/01/2025... | 12/01/2026... | TLSv1.2 | 4096    |
+```
+
+### HTTP Server Discovery
+```bash
+ipdigger --enrich-http --top-limit 10 /var/log/nginx/access.log
+```
+```
+| IP Address   | Port | Status | Server        | CSP | Title           |
+|-------------|------|--------|---------------|-----|-----------------|
+| 203.0.113.5 | 443  | 200    | nginx/1.18.0  | Yes | Welcome Page    |
+| 198.51.100.1| 80   | 308->200| Apache/2.4.41| No  | Redirected Site |
+```
+
+The HTTP enrichment feature:
+- **Port detection**: Tries ports 443, 80, 3000 in order
+- **Status codes**: Shows HTTP status (200, 404, etc.) or redirect chain (308->200)
+- **Server header**: Extracts web server version
+- **CSP detection**: Checks if Content-Security-Policy header is present
+- **Title extraction**: Captures HTML page title
+- **Redirect following**: Use `--follow-redirects` to follow HTTP redirects
 
 ### Geographic Filtering
 ```bash
@@ -254,10 +298,69 @@ The ping feature:
 - **Jitter** - Variation in response times (mdev/stddev)
 - **DEAD status** - Shown for unreachable or unresponsive hosts
 
+### GeoJSON Map Output
+```bash
+# Create GeoJSON for mapping tools
+ipdigger --enrich-geo --output-geomap /var/log/auth.log > map.geojson
+```
+
+The GeoJSON output format:
+- **Valid GeoJSON**: FeatureCollection format compatible with all mapping tools
+- **Point features**: Each IP with coordinates becomes a map point
+- **Rich properties**: Includes count, timestamps, login data, and all enrichment fields
+- **Auto-filtering**: Only IPs with valid latitude/longitude coordinates are included
+- **Coordinate source**: Uses MaxMind GeoLite2 City database for accurate coordinates
+
+**Compatible mapping tools:**
+- Leaflet.js - Popular JavaScript mapping library
+- Mapbox GL JS - Interactive vector maps
+- QGIS - Professional GIS software
+- Google Maps - With GeoJSON layer support
+- Kepler.gl - Geospatial data visualization
+- Any tool supporting GeoJSON standard
+
+**Example GeoJSON output:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [121.4737, 31.2304]
+      },
+      "properties": {
+        "ip_address": "45.67.89.12",
+        "count": 247,
+        "first_seen": "2024-01-13 10:00:00",
+        "last_seen": "2024-01-13 15:30:00",
+        "cc": "CN",
+        "country": "China",
+        "city": "Shanghai",
+        "abuseScore": "95"
+      }
+    }
+  ]
+}
+```
+
+**Usage examples:**
+```bash
+# Create interactive attack map
+ipdigger --enrich-geo --enrich-abuseipdb --output-geomap /var/log/auth.log > attacks.geojson
+
+# Top 20 IPs on a map
+ipdigger --enrich-geo --top-limit 20 --output-geomap /var/log/nginx/access.log > top-visitors.geojson
+
+# Non-EU traffic map
+ipdigger --geo-filter-none-eu --output-geomap /var/log/auth.log > non-eu-traffic.geojson
+```
+
 ### Large File Processing
 ```bash
 # Process large files (1GB+) with auto-threading
-ipdigger --top-20 /var/log/huge-access.log
+ipdigger --top-limit 20 /var/log/huge-access.log
 ```
 
 When processing large files, IPDigger shows a progress bar:
@@ -352,6 +455,8 @@ IPDigger can enrich IP addresses with data from multiple sources:
 - `city` - City name (e.g., "San Francisco", "Shanghai")
 - `asn` - Autonomous System Number (e.g., "AS15169")
 - `org` - Organization/ISP name
+- `latitude` - Latitude coordinate (decimal degrees)
+- `longitude` - Longitude coordinate (decimal degrees)
 
 ### AbuseIPDB
 - `abuseScore` - Abuse confidence score (0-100)
@@ -371,6 +476,22 @@ IPDigger can enrich IP addresses with data from multiple sources:
 
 ### Ping
 - `ping` - Response time and availability (e.g., "avg: 23.5ms jitter: 3.0ms" or "DEAD")
+
+### TLS/SSL Certificate
+- `tls_cn` - Common Name (CN) from certificate
+- `tls_issuer` - Certificate issuer (e.g., "Let's Encrypt", "DigiCert")
+- `tls_algorithm` - Signature algorithm (e.g., "sha256WithRSAEncryption")
+- `tls_created` - Certificate creation date (MM/DD/YYYY HH:MM)
+- `tls_expires` - Certificate expiration date (MM/DD/YYYY HH:MM)
+- `tls_version` - TLS protocol version (e.g., "TLSv1.3", "TLSv1.2")
+- `tls_keysize` - Public key size in bits (e.g., "2048", "4096")
+
+### HTTP Server
+- `http_port` - Port where web server was found (443, 80, or 3000)
+- `http_status` - HTTP status code or redirect chain (e.g., "200", "308->200")
+- `http_server` - Server header value (e.g., "nginx/1.18.0", "Apache/2.4.41")
+- `http_csp` - Content-Security-Policy presence ("Yes" or "No")
+- `http_title` - HTML page title
 
 All enrichment fields are automatically included in both ASCII table and JSON output formats when the corresponding enrichment flag is used.
 
@@ -510,19 +631,25 @@ api_key = YOUR_API_KEY                # Free tier: 1000 requests/day at abuseipd
 **Security Analysis:**
 ```bash
 # Find top attackers with threat intel
-ipdigger --detect-login --enrich-abuseipdb --top-20 --no-private /var/log/auth.log
+ipdigger --detect-login --enrich-abuseipdb --top-limit 20 --no-private /var/log/auth.log
 
 # Identify Tor exit node activity
 ipdigger --enrich-abuseipdb --detect-login /var/log/auth.log
 
 # Filter and analyze non-EU attacks with Tor detection
-ipdigger --geo-filter-none-eu --enrich-abuseipdb --detect-login --top-10 /var/log/auth.log
+ipdigger --geo-filter-none-eu --enrich-abuseipdb --detect-login --top-limit 10 /var/log/auth.log
+
+# Check for expired TLS certificates
+ipdigger --enrich-tls --top-limit 50 /var/log/nginx/access.log
+
+# Discover misconfigured web servers (no CSP)
+ipdigger --enrich-http --top-limit 20 /var/log/nginx/access.log
 ```
 
 **Abuse Reporting:**
 ```bash
 # Get abuse contacts for suspicious IPs
-ipdigger --enrich-whois --detect-login --top-10 /var/log/auth.log
+ipdigger --enrich-whois --detect-login --top-limit 10 /var/log/auth.log
 ```
 
 **Log Analysis:**
@@ -537,44 +664,55 @@ ipdigger --search-regex "error|warning|critical" /var/log/nginx/error.log
 ipdigger --search "Failed password" --geo-filter-none-eu --enrich-geo /var/log/auth.log
 
 # Find specific attack patterns
-ipdigger --search-regex "SQL injection|XSS|RCE" --enrich-abuseipdb --top-20 /var/log/web.log
+ipdigger --search-regex "SQL injection|XSS|RCE" --enrich-abuseipdb --top-limit 20 /var/log/web.log
 ```
 
 **Network Monitoring:**
 ```bash
 # Check host availability and response times
-ipdigger --enrich-ping --top-20 /var/log/nginx/access.log
+ipdigger --enrich-ping --top-limit 20 /var/log/nginx/access.log
 
 # Identify dead or unresponsive IPs
 ipdigger --enrich-ping --detect-login /var/log/auth.log
 
 # Combined network analysis with geo data
-ipdigger --enrich-geo --enrich-ping --top-10 /var/log/nginx/access.log
+ipdigger --enrich-geo --enrich-ping --top-limit 10 /var/log/nginx/access.log
 ```
 
 **Geographic Analysis:**
 ```bash
-# Map traffic sources
-ipdigger --enrich-geo --output-json /var/log/nginx/access.log > traffic.json
+# Create interactive attack map
+ipdigger --enrich-geo --output-geomap /var/log/auth.log > attack-map.geojson
+
+# Map top 50 traffic sources
+ipdigger --enrich-geo --top-limit 50 --output-geomap /var/log/nginx/access.log > traffic-map.geojson
 
 # Focus on non-EU traffic for compliance analysis
-ipdigger --geo-filter-none-eu --enrich-geo --top-20 /var/log/nginx/access.log
+ipdigger --geo-filter-none-eu --enrich-geo --top-limit 20 /var/log/nginx/access.log
 
 # Identify traffic from outside GDPR regions
 ipdigger --geo-filter-none-gdpr --detect-login --no-private /var/log/auth.log
+
+# Export JSON for custom analysis
+ipdigger --enrich-geo --output-json /var/log/nginx/access.log > traffic.json
 ```
 
 **Comprehensive Investigation:**
 ```bash
 # Full enrichment for incident response
 ipdigger --enrich-geo --enrich-rdns --enrich-whois --enrich-abuseipdb \
-         --detect-login --output-json /var/log/auth.log > report.json
+         --enrich-tls --enrich-http --detect-login \
+         --output-json /var/log/auth.log > report.json
+
+# Create comprehensive attack map with all enrichment
+ipdigger --enrich-geo --enrich-abuseipdb --enrich-whois \
+         --detect-login --output-geomap /var/log/auth.log > full-analysis.geojson
 ```
 
 **Large File Processing:**
 ```bash
 # Process 1GB+ files with auto-detected threading
-ipdigger --top-20 /var/log/huge-access.log
+ipdigger --top-limit 20 /var/log/huge-access.log
 
 # Force single-threaded mode for debugging
 ipdigger --single-threaded /var/log/huge-access.log

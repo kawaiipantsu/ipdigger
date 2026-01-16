@@ -1027,8 +1027,35 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
             for (const auto& [key, value] : stat.enrichment->data) {
                 if (enrich_widths.find(key) == enrich_widths.end()) {
                     enrich_fields.push_back(key);
-                    // Use custom display name length for ping field
-                    size_t header_len = (key == "ping") ? std::string("Ping / Alive").length() : key.length();
+                    // Use custom display name length for special fields
+                    size_t header_len = key.length();
+                    if (key == "ping") {
+                        header_len = std::string("Ping / Alive").length();
+                    } else if (key == "tls_cn") {
+                        header_len = std::string("CN").length();
+                    } else if (key == "tls_issuer") {
+                        header_len = std::string("Issuer").length();
+                    } else if (key == "tls_algorithm") {
+                        header_len = std::string("Algorithm").length();
+                    } else if (key == "tls_created") {
+                        header_len = std::string("Created").length();
+                    } else if (key == "tls_expires") {
+                        header_len = std::string("Expires").length();
+                    } else if (key == "tls_version") {
+                        header_len = std::string("TLS Ver").length();
+                    } else if (key == "tls_keysize") {
+                        header_len = std::string("KeySize").length();
+                    } else if (key == "http_port") {
+                        header_len = std::string("Port").length();
+                    } else if (key == "http_status") {
+                        header_len = std::string("Status").length();
+                    } else if (key == "http_server") {
+                        header_len = std::string("Server").length();
+                    } else if (key == "http_csp") {
+                        header_len = std::string("CSP").length();
+                    } else if (key == "http_title") {
+                        header_len = std::string("Title").length();
+                    }
                     enrich_widths[key] = header_len;
                 }
                 enrich_widths[key] = std::max(enrich_widths[key], value.length());
@@ -1082,8 +1109,35 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
         std::cout << " | " << std::left << std::setw(login_width) << "Login";
     }
     for (const auto& field : enrich_fields) {
-        // Use custom display name for ping field
-        std::string display_name = (field == "ping") ? "Ping / Alive" : field;
+        // Use custom display names for special fields
+        std::string display_name = field;
+        if (field == "ping") {
+            display_name = "Ping / Alive";
+        } else if (field == "tls_cn") {
+            display_name = "CN";
+        } else if (field == "tls_issuer") {
+            display_name = "Issuer";
+        } else if (field == "tls_algorithm") {
+            display_name = "Algorithm";
+        } else if (field == "tls_created") {
+            display_name = "Created";
+        } else if (field == "tls_expires") {
+            display_name = "Expires";
+        } else if (field == "tls_version") {
+            display_name = "TLS Ver";
+        } else if (field == "tls_keysize") {
+            display_name = "KeySize";
+        } else if (field == "http_port") {
+            display_name = "Port";
+        } else if (field == "http_status") {
+            display_name = "Status";
+        } else if (field == "http_server") {
+            display_name = "Server";
+        } else if (field == "http_csp") {
+            display_name = "CSP";
+        } else if (field == "http_title") {
+            display_name = "Title";
+        }
         std::cout << " | " << std::left << std::setw(enrich_widths[field]) << display_name;
     }
     std::cout << " |\n";
@@ -1284,6 +1338,88 @@ void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_sea
 
     std::cout << "  ],\n";
     std::cout << "  \"total\": " << sorted_stats.size() << "\n";
+    std::cout << "}\n";
+}
+
+void print_stats_geomap(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    // Convert to vector for sorting by count (descending)
+    std::vector<IPStats> sorted_stats;
+    for (const auto& [ip, stat] : stats) {
+        sorted_stats.push_back(stat);
+    }
+    std::sort(sorted_stats.begin(), sorted_stats.end(),
+              [](const IPStats& a, const IPStats& b) { return a.count > b.count; });
+
+    std::cout << "{\n";
+    std::cout << "  \"type\": \"FeatureCollection\",\n";
+    std::cout << "  \"features\": [\n";
+
+    size_t feature_count = 0;
+    for (const auto& stat : sorted_stats) {
+        // Only include IPs with geo coordinates
+        if (!stat.enrichment ||
+            stat.enrichment->data.find("latitude") == stat.enrichment->data.end() ||
+            stat.enrichment->data.find("longitude") == stat.enrichment->data.end()) {
+            continue;  // Skip IPs without coordinates
+        }
+
+        if (feature_count > 0) {
+            std::cout << ",\n";
+        }
+
+        std::string latitude = stat.enrichment->data.at("latitude");
+        std::string longitude = stat.enrichment->data.at("longitude");
+
+        std::cout << "    {\n";
+        std::cout << "      \"type\": \"Feature\",\n";
+        std::cout << "      \"geometry\": {\n";
+        std::cout << "        \"type\": \"Point\",\n";
+        std::cout << "        \"coordinates\": [" << longitude << ", " << latitude << "]\n";
+        std::cout << "      },\n";
+        std::cout << "      \"properties\": {\n";
+        std::cout << "        \"ip_address\": \"" << json_escape(stat.ip_address) << "\",\n";
+        std::cout << "        \"count\": " << stat.count << ",\n";
+        std::cout << "        \"first_seen\": ";
+        if (stat.first_seen.empty()) {
+            std::cout << "null";
+        } else {
+            std::cout << "\"" << json_escape(stat.first_seen) << "\"";
+        }
+        std::cout << ",\n";
+        std::cout << "        \"last_seen\": ";
+        if (stat.last_seen.empty()) {
+            std::cout << "null";
+        } else {
+            std::cout << "\"" << json_escape(stat.last_seen) << "\"";
+        }
+        std::cout << ",\n";
+        std::cout << "        \"first_timestamp\": " << stat.first_timestamp << ",\n";
+        std::cout << "        \"last_timestamp\": " << stat.last_timestamp << ",\n";
+        std::cout << "        \"login_success_count\": " << stat.login_success_count << ",\n";
+        std::cout << "        \"login_failed_count\": " << stat.login_failed_count;
+
+        if (show_search_hits) {
+            std::cout << ",\n";
+            std::cout << "        \"search_hits\": " << stat.search_hits;
+        }
+
+        // Add all enrichment data (except lat/lon which are already in geometry)
+        if (stat.enrichment && !stat.enrichment->data.empty()) {
+            for (const auto& [key, value] : stat.enrichment->data) {
+                if (key != "latitude" && key != "longitude") {
+                    std::cout << ",\n";
+                    std::cout << "        \"" << json_escape(key) << "\": \""
+                              << json_escape(value) << "\"";
+                }
+            }
+        }
+
+        std::cout << "\n      }\n";
+        std::cout << "    }";
+        feature_count++;
+    }
+
+    std::cout << "\n  ]\n";
     std::cout << "}\n";
 }
 

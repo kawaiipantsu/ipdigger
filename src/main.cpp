@@ -24,11 +24,15 @@ void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n\n";
     std::cout << "Options:\n";
     std::cout << "  --output-json      Output in JSON format\n";
+    std::cout << "  --output-geomap    Output as GeoJSON map (requires --enrich-geo)\n";
     std::cout << "  --enrich-geo       Enrich IPs with geolocation data (MaxMind)\n";
     std::cout << "  --enrich-rdns      Enrich IPs with reverse DNS lookups\n";
     std::cout << "  --enrich-abuseipdb Enrich IPs with AbuseIPDB threat intelligence\n";
     std::cout << "  --enrich-whois     Enrich IPs with WHOIS data (netname, abuse, CIDR, admin)\n";
     std::cout << "  --enrich-ping      Enrich IPs with ping response time and availability\n";
+    std::cout << "  --enrich-tls       Enrich IPs with TLS certificate data (CN, dates, version, keysize)\n";
+    std::cout << "  --enrich-http      Enrich IPs with HTTP server data (port, status, server, CSP, title)\n";
+    std::cout << "  --follow-redirects Follow HTTP redirects when using --enrich-http\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
     std::cout << "  --search <string>  Filter lines by literal string (case-insensitive) and count hits per IP\n";
     std::cout << "  --search-regex <pattern> Filter lines by regex pattern (case-insensitive) and count hits per IP\n";
@@ -52,10 +56,14 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-whois /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-ping /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-tls /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --enrich-http /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --enrich-http --follow-redirects /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --search \"Failed password\" /var/log/auth.log\n";
     std::cout << "  " << program_name << " --search-regex \"error|warning\" /var/log/nginx/error.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-limit 10 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-geo --output-geomap /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
     std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n";
     std::cout << "  " << program_name << " --top-limit 20 --output-json \"/var/log/*.log\"\n";
@@ -94,11 +102,15 @@ int main(int argc, char* argv[]) {
 
     // Parse command line arguments (CLI overrides config)
     bool output_json = config.default_json;
+    bool output_geomap = false;
     bool enable_geo = false;
     bool enable_rdns = false;
     bool enable_abuseipdb = false;
     bool enable_whois = false;
     bool enable_ping = false;
+    bool enable_tls = false;
+    bool enable_http = false;
+    bool follow_redirects = false;
     bool no_private = false;
     bool no_reserved = false;
     bool no_ipv4 = false;
@@ -125,6 +137,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--output-json") {
             output_json = true;
+        } else if (arg == "--output-geomap") {
+            output_geomap = true;
         } else if (arg == "--enrich-geo") {
             enable_geo = true;
         } else if (arg == "--enrich-rdns") {
@@ -135,6 +149,12 @@ int main(int argc, char* argv[]) {
             enable_whois = true;
         } else if (arg == "--enrich-ping") {
             enable_ping = true;
+        } else if (arg == "--enrich-tls") {
+            enable_tls = true;
+        } else if (arg == "--enrich-http") {
+            enable_http = true;
+        } else if (arg == "--follow-redirects") {
+            follow_redirects = true;
         } else if (arg == "--no-private") {
             no_private = true;
         } else if (arg == "--no-reserved") {
@@ -221,8 +241,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Auto-enable geo enrichment if geo filtering is requested
-    if (geo_filter_none_eu || geo_filter_none_gdpr) {
+    // Auto-enable geo enrichment if geo filtering or geomap output is requested
+    if (geo_filter_none_eu || geo_filter_none_gdpr || output_geomap) {
         enable_geo = true;
     }
 
@@ -379,7 +399,7 @@ int main(int argc, char* argv[]) {
         auto stats = ipdigger::generate_statistics(entries);
 
         // Enrich statistics if requested
-        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping) {
+        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping || enable_tls || enable_http) {
             if (enable_geo) {
                 if (!output_json) std::cout << "Enriching with GeoIP data...\n";
                 ipdigger::enrich_geoip_stats(stats, config);
@@ -399,6 +419,14 @@ int main(int argc, char* argv[]) {
 
             if (enable_ping) {
                 ipdigger::enrich_ping_stats(stats, config);
+            }
+
+            if (enable_tls) {
+                ipdigger::enrich_tls_stats(stats, config);
+            }
+
+            if (enable_http) {
+                ipdigger::enrich_http_stats(stats, config, follow_redirects);
             }
         }
 
@@ -424,8 +452,8 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Show filtering info (only in non-JSON mode)
-            if (!output_json && skipped_count > 0) {
+            // Show filtering info (only in non-JSON/non-GeoMap mode)
+            if (!output_json && !output_geomap && skipped_count > 0) {
                 std::cerr << "Filtered out " << skipped_count << " EU IP(s)\n";
             }
 
@@ -454,8 +482,8 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Show filtering info (only in non-JSON mode)
-            if (!output_json && skipped_count > 0) {
+            // Show filtering info (only in non-JSON/non-GeoMap mode)
+            if (!output_json && !output_geomap && skipped_count > 0) {
                 std::cerr << "Filtered out " << skipped_count << " GDPR-compliant region IP(s)\n";
             }
 
@@ -464,7 +492,9 @@ int main(int argc, char* argv[]) {
 
         // Display results (always use statistics output)
         bool search_active = !search_string.empty() || !search_regex.empty();
-        if (output_json) {
+        if (output_geomap) {
+            ipdigger::print_stats_geomap(stats, search_active);
+        } else if (output_json) {
             ipdigger::print_stats_json(stats, search_active);
         } else {
             ipdigger::print_stats_table(stats, search_active);

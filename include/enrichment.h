@@ -249,6 +249,36 @@ void enrich_ping_stats(std::map<std::string, IPStats>& stats, const Config& conf
  */
 std::string ping_host(const std::string& ip_address, int ping_count = 3);
 
+/**
+ * Enrich statistics with TLS certificate data
+ * @param stats Map of IP statistics (modified in place)
+ * @param config Configuration
+ */
+void enrich_tls_stats(std::map<std::string, IPStats>& stats, const Config& config);
+
+/**
+ * Retrieve TLS certificate information from an IP address
+ * @param ip_address IP address to connect to (port 443)
+ * @return Map of fields (tls_cn, tls_issuer, tls_algorithm, tls_created, tls_expires, tls_version, tls_keysize) or empty on error
+ */
+std::map<std::string, std::string> tls_lookup(const std::string& ip_address);
+
+/**
+ * Enrich statistics with HTTP server data
+ * @param stats Map of IP statistics (modified in place)
+ * @param config Configuration
+ * @param follow_redirects Whether to follow HTTP redirects
+ */
+void enrich_http_stats(std::map<std::string, IPStats>& stats, const Config& config, bool follow_redirects);
+
+/**
+ * Retrieve HTTP server information from an IP address
+ * @param ip_address IP address to check
+ * @param follow_redirects Whether to follow HTTP redirects (default: true)
+ * @return Map of fields (http_port, http_status, http_server, http_csp, http_title) or empty if no web server
+ */
+std::map<std::string, std::string> http_lookup(const std::string& ip_address, bool follow_redirects = true);
+
 } // namespace ipdigger
 
 #endif // IPDIGGER_ENRICHMENT_H

@@ -787,6 +787,20 @@ std::map<std::string, std::string> maxmind_lookup(
         }
     }
 
+    // Extract latitude (only in City database)
+    if (MMDB_get_value(&lookup_result.entry, &entry_data, "location", "latitude", NULL) == MMDB_SUCCESS) {
+        if (entry_data.has_data && entry_data.type == MMDB_DATA_TYPE_DOUBLE) {
+            result["latitude"] = std::to_string(entry_data.double_value);
+        }
+    }
+
+    // Extract longitude (only in City database)
+    if (MMDB_get_value(&lookup_result.entry, &entry_data, "location", "longitude", NULL) == MMDB_SUCCESS) {
+        if (entry_data.has_data && entry_data.type == MMDB_DATA_TYPE_DOUBLE) {
+            result["longitude"] = std::to_string(entry_data.double_value);
+        }
+    }
+
     MMDB_close(&mmdb);
     return result;
 }
@@ -1526,6 +1540,526 @@ void enrich_ping_stats(std::map<std::string, IPStats>& stats, const Config& conf
 
         } catch (const std::exception& e) {
             std::cerr << "\nWarning: Ping failed for " << ip << ": "
+                      << e.what() << "\n";
+        }
+    }
+    std::cerr << "\n";
+}
+
+// Helper function to format certificate dates to MM/DD/YYYY HH:MM
+static std::string format_cert_date(const std::string& cert_date) {
+    // Input format: "Jan 13 06:24:14 2026 GMT"
+    // Output format: "01/13/2026 06:24"
+
+    if (cert_date.empty()) return "";
+
+    static const std::map<std::string, std::string> months = {
+        {"Jan", "01"}, {"Feb", "02"}, {"Mar", "03"}, {"Apr", "04"},
+        {"May", "05"}, {"Jun", "06"}, {"Jul", "07"}, {"Aug", "08"},
+        {"Sep", "09"}, {"Oct", "10"}, {"Nov", "11"}, {"Dec", "12"}
+    };
+
+    std::istringstream iss(cert_date);
+    std::string month_str, day_str, time_str, year_str;
+
+    iss >> month_str >> day_str >> time_str >> year_str;
+
+    // Find month number
+    auto it = months.find(month_str);
+    if (it == months.end()) return cert_date;  // Return original if parse fails
+
+    std::string month_num = it->second;
+
+    // Extract HH:MM from time (ignore seconds)
+    std::string hh_mm;
+    if (time_str.length() >= 5) {
+        hh_mm = time_str.substr(0, 5);  // Get HH:MM
+    }
+
+    // Format: MM/DD/YYYY HH:MM
+    std::string formatted = month_num + "/" + day_str + "/" + year_str;
+    if (!hh_mm.empty()) {
+        formatted += " " + hh_mm;
+    }
+
+    return formatted;
+}
+
+std::map<std::string, std::string> tls_lookup(const std::string& ip_address) {
+    std::map<std::string, std::string> result;
+
+    // Get TLS version - try multiple methods for reliability
+    std::string tls_version;
+
+    // Method 1: Look for Protocol line in SSL-Session section
+    std::string version_cmd = "timeout 5 openssl s_client -connect " + ip_address +
+                             ":443 -servername " + ip_address +
+                             " </dev/null 2>&1 | sed -n '/SSL-Session:/,/^---/p' | grep 'Protocol' | head -1";
+    FILE* version_pipe = popen(version_cmd.c_str(), "r");
+    if (version_pipe) {
+        char version_buffer[256];
+        if (fgets(version_buffer, sizeof(version_buffer), version_pipe) != nullptr) {
+            std::string proto_line(version_buffer);
+            if (proto_line.find(":") != std::string::npos) {
+                size_t colon_pos = proto_line.find(":");
+                tls_version = proto_line.substr(colon_pos + 1);
+                tls_version.erase(0, tls_version.find_first_not_of(" \t\r\n"));
+                tls_version.erase(tls_version.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+        pclose(version_pipe);
+    }
+
+    // Method 2: If still empty, try looking for "New, TLSvX.X" format
+    if (tls_version.empty()) {
+        std::string alt_cmd = "timeout 5 openssl s_client -connect " + ip_address +
+                             ":443 -servername " + ip_address +
+                             " </dev/null 2>&1 | grep -o 'TLSv[0-9]\\.[0-9]' | head -1";
+        FILE* alt_pipe = popen(alt_cmd.c_str(), "r");
+        if (alt_pipe) {
+            char alt_buffer[64];
+            if (fgets(alt_buffer, sizeof(alt_buffer), alt_pipe) != nullptr) {
+                tls_version = alt_buffer;
+                tls_version.erase(0, tls_version.find_first_not_of(" \t\r\n"));
+                tls_version.erase(tls_version.find_last_not_of(" \t\r\n") + 1);
+            }
+            pclose(alt_pipe);
+        }
+    }
+
+    // Now get certificate information
+    std::string cmd = "timeout 5 openssl s_client -connect " + ip_address + ":443 -servername " +
+                      ip_address + " </dev/null 2>/dev/null | openssl x509 -noout -text 2>/dev/null";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return result;  // Empty on error
+    }
+
+    char buffer[512];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    int status = pclose(pipe);
+    if (status != 0 || output.empty()) {
+        return result;  // Empty on error
+    }
+
+    // Parse certificate information
+    std::istringstream iss(output);
+    std::string line;
+    bool in_validity = false;
+    std::string common_name;
+    std::string issuer;
+    std::string algorithm;
+    std::string not_before;
+    std::string not_after;
+    std::string key_size;
+
+    while (std::getline(iss, line)) {
+        // Extract Signature Algorithm
+        if (line.find("Signature Algorithm:") != std::string::npos) {
+            size_t colon_pos = line.find(":");
+            if (colon_pos != std::string::npos) {
+                algorithm = line.substr(colon_pos + 1);
+                algorithm.erase(0, algorithm.find_first_not_of(" \t\r\n"));
+                algorithm.erase(algorithm.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+
+        // Extract Issuer
+        if (line.find("Issuer:") != std::string::npos) {
+            size_t cn_pos = line.find("CN = ");
+            if (cn_pos == std::string::npos) {
+                cn_pos = line.find("CN=");
+                if (cn_pos != std::string::npos) {
+                    issuer = line.substr(cn_pos + 3);
+                }
+            } else {
+                issuer = line.substr(cn_pos + 5);
+            }
+            // Trim and clean
+            size_t comma_pos = issuer.find(',');
+            if (comma_pos != std::string::npos) {
+                issuer = issuer.substr(0, comma_pos);
+            }
+            // Trim whitespace
+            issuer.erase(0, issuer.find_first_not_of(" \t\r\n"));
+            issuer.erase(issuer.find_last_not_of(" \t\r\n") + 1);
+        }
+
+        // Extract Subject (CN)
+        if (line.find("Subject:") != std::string::npos) {
+            size_t cn_pos = line.find("CN = ");
+            if (cn_pos == std::string::npos) {
+                cn_pos = line.find("CN=");
+                if (cn_pos != std::string::npos) {
+                    common_name = line.substr(cn_pos + 3);
+                }
+            } else {
+                common_name = line.substr(cn_pos + 5);
+            }
+            // Trim and clean
+            size_t comma_pos = common_name.find(',');
+            if (comma_pos != std::string::npos) {
+                common_name = common_name.substr(0, comma_pos);
+            }
+            // Trim whitespace
+            common_name.erase(0, common_name.find_first_not_of(" \t\r\n"));
+            common_name.erase(common_name.find_last_not_of(" \t\r\n") + 1);
+        }
+
+        // Extract Validity
+        if (line.find("Validity") != std::string::npos) {
+            in_validity = true;
+        }
+        if (in_validity && line.find("Not Before:") != std::string::npos) {
+            size_t colon_pos = line.find(":");
+            if (colon_pos != std::string::npos) {
+                not_before = line.substr(colon_pos + 1);
+                not_before.erase(0, not_before.find_first_not_of(" \t\r\n"));
+                not_before.erase(not_before.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+        if (in_validity && line.find("Not After :") != std::string::npos) {
+            size_t colon_pos = line.find(":");
+            if (colon_pos != std::string::npos) {
+                not_after = line.substr(colon_pos + 1);
+                not_after.erase(0, not_after.find_first_not_of(" \t\r\n"));
+                not_after.erase(not_after.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+
+        // Extract Public Key size
+        if (line.find("Public-Key:") != std::string::npos) {
+            size_t paren_pos = line.find("(");
+            size_t bit_pos = line.find("bit");
+            if (paren_pos != std::string::npos && bit_pos != std::string::npos) {
+                key_size = line.substr(paren_pos + 1, bit_pos - paren_pos - 2);
+                key_size.erase(0, key_size.find_first_not_of(" \t\r\n"));
+                key_size.erase(key_size.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+    }
+
+    // Store results
+    if (!common_name.empty()) {
+        result["tls_cn"] = common_name;
+    }
+    if (!issuer.empty()) {
+        result["tls_issuer"] = issuer;
+    }
+    if (!algorithm.empty()) {
+        result["tls_algorithm"] = algorithm;
+    }
+    if (!not_before.empty()) {
+        result["tls_created"] = format_cert_date(not_before);
+    }
+    if (!not_after.empty()) {
+        result["tls_expires"] = format_cert_date(not_after);
+    }
+    if (!tls_version.empty()) {
+        result["tls_version"] = tls_version;
+    }
+    if (!key_size.empty()) {
+        result["tls_keysize"] = key_size;
+    }
+
+    return result;
+}
+
+void enrich_tls_stats(std::map<std::string, IPStats>& stats, const Config& config) {
+    (void)config;  // Unused for now, but kept for consistency
+
+    // Collect all IPs that need TLS enrichment
+    std::vector<std::string> ips_to_check;
+    for (const auto& [ip, stat] : stats) {
+        // Check if already enriched with TLS data
+        bool has_tls = false;
+        if (stat.enrichment) {
+            has_tls = stat.enrichment->data.count("tls_cn") > 0;
+        }
+        if (!has_tls) {
+            ips_to_check.push_back(ip);
+        }
+    }
+
+    if (ips_to_check.empty()) {
+        return;
+    }
+
+    std::cout << "Enriching with TLS certificate data...\n";
+
+    // Process each IP
+    size_t total = ips_to_check.size();
+    size_t completed = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (const auto& ip : ips_to_check) {
+        try {
+            // Lookup TLS certificate data
+            auto tls_data = tls_lookup(ip);
+
+            // Add to enrichment data
+            if (!tls_data.empty()) {
+                if (!stats[ip].enrichment) {
+                    stats[ip].enrichment = std::make_shared<EnrichmentData>();
+                    stats[ip].enrichment->ip_address = ip;
+                }
+
+                for (const auto& [key, value] : tls_data) {
+                    stats[ip].enrichment->data[key] = value;
+                }
+            }
+
+            // Update progress
+            completed++;
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            float progress = static_cast<float>(completed) / total;
+
+            // Progress bar
+            std::cerr << "\r[";
+            int bar_width = 30;
+            int pos = static_cast<int>(bar_width * progress);
+            for (int i = 0; i < bar_width; ++i) {
+                if (i < pos) std::cerr << "=";
+                else if (i == pos) std::cerr << ">";
+                else std::cerr << " ";
+            }
+            std::cerr << "] " << completed << "/" << total << " ("
+                      << static_cast<int>(progress * 100) << "%) " << elapsed << "s";
+            std::cerr.flush();
+
+        } catch (const std::exception& e) {
+            std::cerr << "\nWarning: TLS lookup failed for " << ip << ": "
+                      << e.what() << "\n";
+        }
+    }
+    std::cerr << "\n";
+}
+
+std::map<std::string, std::string> http_lookup(const std::string& ip_address, bool follow_redirects) {
+    std::map<std::string, std::string> result;
+
+    // Ports to check
+    std::vector<int> ports = {443, 80, 3000};
+    std::string working_port;
+    std::string protocol;
+
+    // Prepare redirect flag
+    std::string redirect_flag = follow_redirects ? "-L " : "";
+
+    // Find first responding port
+    for (int port : ports) {
+        protocol = (port == 443) ? "https" : "http";
+        std::string check_cmd = "timeout 3 curl -s -I " + redirect_flag + "--max-time 3 " + protocol + "://" +
+                               ip_address + ":" + std::to_string(port) + " 2>/dev/null | head -20";
+
+        FILE* check_pipe = popen(check_cmd.c_str(), "r");
+        if (check_pipe) {
+            char check_buffer[256];
+            std::string check_output;
+            while (fgets(check_buffer, sizeof(check_buffer), check_pipe) != nullptr) {
+                check_output += check_buffer;
+            }
+            int status = pclose(check_pipe);
+
+            // If we got a response, use this port
+            if (status == 0 && !check_output.empty() && check_output.find("HTTP") != std::string::npos) {
+                working_port = std::to_string(port);
+                break;
+            }
+        }
+    }
+
+    // If no port responded, return empty
+    if (working_port.empty()) {
+        return result;
+    }
+
+    // Now fetch full headers from working port
+    std::string url = protocol + "://" + ip_address + ":" + working_port;
+    std::string cmd = "timeout 5 curl -s -I " + redirect_flag + "--max-time 5 " + url + " 2>/dev/null";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+        return result;
+    }
+
+    char buffer[512];
+    std::string headers;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        headers += buffer;
+    }
+    pclose(pipe);
+
+    if (headers.empty()) {
+        return result;
+    }
+
+    // Parse headers - capture all status codes for redirect chain
+    std::istringstream iss(headers);
+    std::string line;
+    std::vector<std::string> status_codes;  // All status codes in chain
+    std::string server;
+    std::string csp;
+
+    while (std::getline(iss, line)) {
+        // Extract ALL status codes (e.g., "HTTP/1.1 200 OK")
+        if (line.find("HTTP/") != std::string::npos) {
+            std::istringstream status_iss(line);
+            std::string http_version, code;
+            status_iss >> http_version >> code;
+            if (!code.empty() && code.length() == 3 && std::isdigit(code[0])) {
+                status_codes.push_back(code);
+            }
+        }
+
+        // Convert to lowercase for case-insensitive header matching
+        std::string lower_line = line;
+        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+        // Extract Server header (keep last one - from final destination)
+        if (lower_line.find("server:") == 0) {
+            size_t colon_pos = line.find(":");
+            if (colon_pos != std::string::npos) {
+                server = line.substr(colon_pos + 1);
+                server.erase(0, server.find_first_not_of(" \t\r\n"));
+                server.erase(server.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+
+        // Extract Content-Security-Policy header (check if any response has it)
+        if (lower_line.find("content-security-policy:") == 0) {
+            csp = "Yes";
+        }
+    }
+
+    // Build status code chain
+    std::string status_code;
+    if (!status_codes.empty()) {
+        if (follow_redirects && status_codes.size() > 1) {
+            // Show redirect chain: "308->200"
+            for (size_t i = 0; i < status_codes.size(); ++i) {
+                if (i > 0) status_code += "->";
+                status_code += status_codes[i];
+            }
+        } else {
+            // Show single status code
+            status_code = status_codes.back();
+        }
+    }
+
+    // Get page title using curl to fetch HTML
+    std::string title;
+    std::string title_cmd = "timeout 5 curl -s " + redirect_flag + "--max-time 5 " + url +
+                           " 2>/dev/null | grep -i '<title' | sed 's/<[^>]*>//g' | head -1";
+    FILE* title_pipe = popen(title_cmd.c_str(), "r");
+    if (title_pipe) {
+        char title_buffer[512];
+        if (fgets(title_buffer, sizeof(title_buffer), title_pipe) != nullptr) {
+            title = title_buffer;
+            title.erase(0, title.find_first_not_of(" \t\r\n"));
+            title.erase(title.find_last_not_of(" \t\r\n") + 1);
+            // Truncate if too long
+            if (title.length() > 50) {
+                title = title.substr(0, 47) + "...";
+            }
+        }
+        pclose(title_pipe);
+    }
+
+    // Store results
+    if (!working_port.empty()) {
+        result["http_port"] = working_port;
+    }
+    if (!status_code.empty()) {
+        result["http_status"] = status_code;
+    }
+    if (!server.empty()) {
+        result["http_server"] = server;
+    }
+    if (!csp.empty()) {
+        result["http_csp"] = csp;
+    } else {
+        result["http_csp"] = "No";
+    }
+    if (!title.empty()) {
+        result["http_title"] = title;
+    }
+
+    return result;
+}
+
+void enrich_http_stats(std::map<std::string, IPStats>& stats, const Config& config, bool follow_redirects) {
+    (void)config;  // Unused for now
+
+    // Collect all IPs that need HTTP enrichment
+    std::vector<std::string> ips_to_check;
+    for (const auto& [ip, stat] : stats) {
+        // Check if already enriched with HTTP data
+        bool has_http = false;
+        if (stat.enrichment) {
+            has_http = stat.enrichment->data.count("http_port") > 0;
+        }
+        if (!has_http) {
+            ips_to_check.push_back(ip);
+        }
+    }
+
+    if (ips_to_check.empty()) {
+        return;
+    }
+
+    std::cout << "Enriching with HTTP server data"
+              << (follow_redirects ? " (following redirects)" : " (no redirects)") << "...\n";
+
+    // Process each IP
+    size_t total = ips_to_check.size();
+    size_t completed = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (const auto& ip : ips_to_check) {
+        try {
+            // Lookup HTTP data
+            auto http_data = http_lookup(ip, follow_redirects);
+
+            // Add to enrichment data
+            if (!http_data.empty()) {
+                if (!stats[ip].enrichment) {
+                    stats[ip].enrichment = std::make_shared<EnrichmentData>();
+                    stats[ip].enrichment->ip_address = ip;
+                }
+
+                for (const auto& [key, value] : http_data) {
+                    stats[ip].enrichment->data[key] = value;
+                }
+            }
+
+            // Update progress
+            completed++;
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            float progress = static_cast<float>(completed) / total;
+
+            // Progress bar
+            std::cerr << "\r[";
+            int bar_width = 30;
+            int pos = static_cast<int>(bar_width * progress);
+            for (int i = 0; i < bar_width; ++i) {
+                if (i < pos) std::cerr << "=";
+                else if (i == pos) std::cerr << ">";
+                else std::cerr << " ";
+            }
+            std::cerr << "] " << completed << "/" << total << " ("
+                      << static_cast<int>(progress * 100) << "%) " << elapsed << "s";
+            std::cerr.flush();
+
+        } catch (const std::exception& e) {
+            std::cerr << "\nWarning: HTTP lookup failed for " << ip << ": "
                       << e.what() << "\n";
         }
     }

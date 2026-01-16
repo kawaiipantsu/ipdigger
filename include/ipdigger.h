@@ -193,6 +193,13 @@ void print_json(const std::vector<IPEntry>& entries);
 void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_search_hits = false);
 
 /**
+ * Print statistics as GeoJSON map (requires geo enrichment with lat/lon)
+ * @param stats Map of IP statistics
+ * @param show_search_hits Whether to include search_hits field (default: false)
+ */
+void print_stats_geomap(const std::map<std::string, IPStats>& stats, bool show_search_hits = false);
+
+/**
  * Get version information
  * @return Version string
  */
