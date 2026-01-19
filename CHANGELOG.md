@@ -5,6 +5,68 @@ All notable changes to IPDigger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-19
+
+### Added
+- **HTTP Server Enrichment** (`--enrich-http`): Discover web servers running on IP addresses
+  - Automatic port detection: tries ports 443 (HTTPS), 80 (HTTP), and 3000 in sequence
+  - HTTP status code extraction (e.g., 200, 404, 500)
+  - Redirect chain display (e.g., "308->200" for redirect followed by success)
+  - Server header extraction (e.g., "nginx/1.18.0", "Apache/2.4.41")
+  - Content-Security-Policy (CSP) detection - flags whether CSP header is present
+  - HTML page title extraction from response body
+  - `--follow-redirects` flag to follow HTTP redirects (optional, disabled by default)
+  - Full integration with existing enrichment and filtering flags
+  - Progress bar with real-time updates during HTTP checks
+  - JSON output includes `http_port`, `http_status`, `http_server`, `http_csp`, `http_title` fields
+- **GeoJSON Map Output** (`--output-geomap`): Export IP data as GeoJSON for mapping visualization
+  - Valid GeoJSON FeatureCollection format compatible with all mapping tools
+  - Point features with latitude/longitude coordinates from MaxMind GeoLite2 City database
+  - Rich property data: IP address, count, timestamps, login data, all enrichment fields
+  - Automatic filtering: only includes IPs with valid coordinates
+  - Compatible mapping tools: Leaflet.js, Mapbox GL JS, QGIS, Google Maps, Kepler.gl
+  - Requires `--enrich-geo` flag to provide coordinate data
+  - Stackable with other flags: `--enrich-abuseipdb`, `--detect-login`, `--top-limit`, `--geo-filter-*`
+- **Enhanced Filtering Options**: More flexible control over result sets
+  - `--top-limit <N>`: Show only top N IPs sorted by count (flexible alternative to fixed --top-10/20/50/100)
+  - `--limit <N>`: Show only latest N entries from the log (useful for recent activity)
+  - `--no-reserved`: Comprehensive filtering of all reserved IP ranges
+    - Includes private IPs (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, fe80::/10)
+    - Loopback addresses (127.0.0.0/8, ::1/128)
+    - Link-local addresses (169.254.0.0/16, fe80::/10)
+    - Multicast addresses (224.0.0.0/4, ff00::/8)
+    - Documentation/TEST-NET ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+    - More comprehensive than `--no-private` (which only filters RFC 1918 ranges)
+
+### Changed
+- **CLI Interface**: Added new flags for HTTP enrichment, GeoJSON output, and flexible filtering
+- **Output Formats**: Table output includes HTTP enrichment columns when `--enrich-http` is used
+- **Documentation**: Comprehensive examples for HTTP enrichment, GeoJSON mapping, and new filtering options
+
+### Improved
+- **Use Case Coverage**: Better support for network discovery, web server analysis, and geographic visualization
+- **Mapping Integration**: Direct export to GeoJSON enables powerful visual analysis of IP distributions
+- **Security Analysis**: HTTP enrichment reveals web server configurations, CSP policies, and TLS setups
+- **Flexibility**: `--top-limit <N>` and `--limit <N>` provide more granular control over result sets
+
+### Examples
+```bash
+# Discover web servers and check TLS certificates
+ipdigger --enrich-http --enrich-tls --top-limit 10 /var/log/nginx/access.log
+
+# Create interactive attack map with threat intelligence
+ipdigger --enrich-geo --enrich-abuseipdb --output-geomap /var/log/auth.log > attack-map.geojson
+
+# Find top 20 IPs outside EU with HTTP server details
+ipdigger --geo-filter-none-eu --enrich-http --top-limit 20 /var/log/nginx/access.log
+
+# Show latest 50 entries with full enrichment
+ipdigger --enrich-geo --enrich-rdns --limit 50 /var/log/auth.log
+
+# Export comprehensive map data for visualization
+ipdigger --enrich-geo --enrich-abuseipdb --detect-login --output-geomap /var/log/auth.log > map.geojson
+```
+
 ## [2.0.0] - 2026-01-14
 
 ### Added
@@ -271,6 +333,7 @@ None. This release is fully backward compatible with v1.3.0. The default behavio
 - GNU Make
 - dpkg-deb (for Debian package creation)
 
+[2.1.0]: https://github.com/kawaiipantsu/ipdigger/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/kawaiipantsu/ipdigger/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/kawaiipantsu/ipdigger/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kawaiipantsu/ipdigger/compare/v1.1.0...v1.2.0

@@ -1,7 +1,7 @@
 # Makefile for C++ project with security hardening and Debian packaging
 # Project configuration
 PROJECT_NAME    := ipdigger
-VERSION         := 2.0.0
+VERSION         := 2.1.0
 PREFIX          := /usr/local
 BINDIR          := $(PREFIX)/bin
 MANDIR          := $(PREFIX)/share/man/man1
