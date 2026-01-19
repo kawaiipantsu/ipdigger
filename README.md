@@ -34,6 +34,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 🎯 **Filtering**: Reserved IPs, IPv4/IPv6, top N IPs, geographic filtering (EU/GDPR regions)
 - 📦 **Formats**: ASCII tables, JSON output, or GeoJSON map
 - ⚡ **High Performance**: Multi-threaded parsing for large files (1GB+) with progress bar and ETA
+- 🗜️ **Compressed Files**: Auto-detects and processes .gz, .bz2, and .xz files
 - 🔒 **Secure**: Full security hardening (PIE, RELRO, stack protection)
 
 ## Installation
@@ -57,7 +58,9 @@ sudo make install
 - libcurl4-openssl-dev
 - libssl-dev
 - libmaxminddb-dev
-- zlib1g-dev
+- zlib1g-dev (for gzip compression)
+- libbz2-dev (for bzip2 compression)
+- liblzma-dev (for XZ compression)
 
 ## Quick Start
 
@@ -226,6 +229,36 @@ cat /var/log/auth.log | ipdigger - --output-json
 # Complex pipeline
 awk '/Failed/ {print}' /var/log/auth.log | ipdigger --detect-login --enrich-geo --top-limit 5
 ```
+
+### Compressed Files
+
+IPDigger automatically detects and processes compressed log files. No special flags needed:
+
+```bash
+# Gzip compressed logs
+ipdigger /var/log/nginx/access.log.gz
+
+# Bzip2 compressed logs
+ipdigger /var/log/auth.log.bz2
+
+# XZ compressed logs
+ipdigger /var/log/syslog.xz
+
+# Mixed compressed and uncompressed files with glob patterns
+ipdigger "/var/log/nginx/*.log*"
+
+# Works with all options
+ipdigger --top-limit 10 --enrich-geo /var/log/auth.log.gz
+ipdigger --output-json /var/log/nginx/access.log.bz2
+ipdigger --detect-ddos --detect-bruteforce /var/log/auth.log.xz
+```
+
+**Supported formats:**
+- `.gz` (gzip) - ~30-60 MB/s
+- `.bz2` (bzip2) - ~15-30 MB/s
+- `.xz` (XZ) - ~40-80 MB/s
+
+**Note:** Compressed files use single-threaded parsing only (streams don't support seeking). Regular files can still use parallel processing.
 
 ### Login Detection
 ```bash

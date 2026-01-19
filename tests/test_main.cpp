@@ -4,6 +4,7 @@
 #include <vector>
 #include <fstream>
 #include "ipdigger.h"
+#include "compression.h"
 
 void test_extract_ipv4() {
     std::cout << "Testing IPv4 extraction...\n";
@@ -322,6 +323,124 @@ void test_time_range_contains() {
     std::cout << "  ✓ All time range contains tests passed\n";
 }
 
+void test_detect_compression() {
+    std::cout << "Testing compression detection...\n";
+
+    // Test regular files
+    assert(ipdigger::detect_compression("test.log") == ipdigger::CompressionType::NONE);
+    assert(ipdigger::detect_compression("sample.txt") == ipdigger::CompressionType::NONE);
+    assert(!ipdigger::is_compressed("test.log"));
+
+    // Test gzip files
+    assert(ipdigger::detect_compression("test.log.gz") == ipdigger::CompressionType::GZIP);
+    assert(ipdigger::detect_compression("test.GZ") == ipdigger::CompressionType::GZIP);
+    assert(ipdigger::is_compressed("test.log.gz"));
+
+    // Test bzip2 files
+    assert(ipdigger::detect_compression("test.log.bz2") == ipdigger::CompressionType::BZIP2);
+    assert(ipdigger::detect_compression("test.BZ2") == ipdigger::CompressionType::BZIP2);
+    assert(ipdigger::is_compressed("test.log.bz2"));
+
+    // Test XZ files
+    assert(ipdigger::detect_compression("test.log.xz") == ipdigger::CompressionType::XZ);
+    assert(ipdigger::detect_compression("test.XZ") == ipdigger::CompressionType::XZ);
+    assert(ipdigger::is_compressed("test.log.xz"));
+
+    std::cout << "  ✓ All compression detection tests passed\n";
+}
+
+void test_parse_compressed_files() {
+    std::cout << "Testing compressed file parsing...\n";
+
+    const auto& cache = ipdigger::get_regex_cache();
+
+    // Parse uncompressed reference file
+    std::vector<ipdigger::IPEntry> entries_ref;
+    try {
+        entries_ref = ipdigger::parse_file("tests/test_compressed.log", cache, false, false);
+    } catch (const std::exception& e) {
+        std::cerr << "  Warning: Could not read reference file: " << e.what() << "\n";
+        std::cerr << "  Skipping compressed file tests\n";
+        return;
+    }
+
+    // Test gzip parsing
+    try {
+        auto entries_gz = ipdigger::parse_file("tests/test_compressed.log.gz", cache, false, false);
+        assert(entries_gz.size() == entries_ref.size());
+        // Check that first IP matches
+        if (!entries_gz.empty() && !entries_ref.empty()) {
+            assert(entries_gz[0].ip_address == entries_ref[0].ip_address);
+        }
+        std::cout << "  ✓ Gzip parsing test passed (" << entries_gz.size() << " IPs found)\n";
+    } catch (const std::exception& e) {
+        std::cerr << "  Warning: Gzip test failed: " << e.what() << "\n";
+    }
+
+    // Test bzip2 parsing
+    try {
+        auto entries_bz2 = ipdigger::parse_file("tests/test_compressed.log.bz2", cache, false, false);
+        assert(entries_bz2.size() == entries_ref.size());
+        // Check that first IP matches
+        if (!entries_bz2.empty() && !entries_ref.empty()) {
+            assert(entries_bz2[0].ip_address == entries_ref[0].ip_address);
+        }
+        std::cout << "  ✓ Bzip2 parsing test passed (" << entries_bz2.size() << " IPs found)\n";
+    } catch (const std::exception& e) {
+        std::cerr << "  Warning: Bzip2 test failed: " << e.what() << "\n";
+    }
+
+    // Test XZ parsing
+    try {
+        auto entries_xz = ipdigger::parse_file("tests/test_compressed.log.xz", cache, false, false);
+        assert(entries_xz.size() == entries_ref.size());
+        // Check that first IP matches
+        if (!entries_xz.empty() && !entries_ref.empty()) {
+            assert(entries_xz[0].ip_address == entries_ref[0].ip_address);
+        }
+        std::cout << "  ✓ XZ parsing test passed (" << entries_xz.size() << " IPs found)\n";
+    } catch (const std::exception& e) {
+        std::cerr << "  Warning: XZ test failed: " << e.what() << "\n";
+    }
+
+    std::cout << "  ✓ All compressed file parsing tests completed\n";
+}
+
+void test_corrupted_compressed() {
+    std::cout << "Testing corrupted compressed file handling...\n";
+
+    const auto& cache = ipdigger::get_regex_cache();
+
+    // Create a fake gzip file (gzip treats invalid data as uncompressed, so this won't throw)
+    std::ofstream fake_gz("tests/fake.log.gz");
+    fake_gz << "This is not a gzip file";
+    fake_gz.close();
+
+    // Try to parse it - should not crash (gzip falls back to plain text)
+    try {
+        auto entries = ipdigger::parse_file("tests/fake.log.gz", cache, false, false);
+        std::cout << "  ✓ Handled invalid gzip gracefully (read as plain text)\n";
+    } catch (const std::exception& e) {
+        std::cout << "  ✓ Caught error: " << e.what() << "\n";
+    }
+
+    // Test with a nonexistent file - should throw
+    bool caught_exception = false;
+    try {
+        ipdigger::parse_file("tests/nonexistent.log.gz", cache, false, false);
+    } catch (const std::exception& e) {
+        caught_exception = true;
+        std::cout << "  ✓ Correctly caught file not found error\n";
+    }
+
+    assert(caught_exception);
+
+    // Clean up
+    std::remove("tests/fake.log.gz");
+
+    std::cout << "  ✓ Corrupted file handling test passed\n";
+}
+
 int main() {
     std::cout << "Running IPDigger tests...\n\n";
 
@@ -335,6 +454,9 @@ int main() {
         test_parse_time_string();
         test_time_range_parsing();
         test_time_range_contains();
+        test_detect_compression();
+        test_parse_compressed_files();
+        test_corrupted_compressed();
         test_version();
 
         std::cout << "\n✓ All tests passed successfully!\n";

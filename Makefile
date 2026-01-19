@@ -22,7 +22,7 @@ CXXFLAGS        += -fcf-protection
 
 LDFLAGS         := -pie -Wl,-z,relro,-z,now,-z,noexecstack
 LDFLAGS         += -Wl,--as-needed
-LDFLAGS         += -lcurl -lssl -lcrypto -lmaxminddb
+LDFLAGS         += -lcurl -lssl -lcrypto -lmaxminddb -lz -lbz2 -llzma
 
 # Directories
 SRCDIR          := src

@@ -2,6 +2,7 @@
 #include "enrichment.h"
 #include "regex_cache.h"
 #include "progress.h"
+#include "compression.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -571,8 +572,6 @@ void detect_attack_patterns(std::map<std::string, IPStats>& stats,
             continue;
         }
 
-        const auto& ip_entry_list = ip_entries[ip];
-
         // DDoS Detection: High volume of requests in short time window
         if (detect_ddos) {
             if (stat.first_timestamp > 0 && stat.last_timestamp > 0) {
@@ -977,7 +976,6 @@ std::vector<IPEntry> parse_stdin(const RegexCache& cache, bool detect_login,
 std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,
                                  const std::string& search_string, const std::string& search_regex) {
     std::vector<IPEntry> entries;
-    std::ifstream file(filename);
 
     // Compile regex pattern if search_regex is provided
     std::regex regex_pattern;
@@ -991,31 +989,36 @@ std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& c
     }
     bool use_search = !search_string.empty();
 
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file: " + filename);
+    // Create appropriate reader (auto-detects compression)
+    std::unique_ptr<LineReader> reader;
+    try {
+        reader = create_reader(filename);
+    } catch (const std::runtime_error& e) {
+        throw std::runtime_error("Failed to open file: " + filename + " (" + e.what() + ")");
     }
 
     // Get file size and initialize progress tracker
-    file.seekg(0, std::ios::end);
-    size_t file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
+    size_t file_size = get_file_size(filename);
 
     ProgressTracker progress;
     progress.init(file_size, show_progress, filename);
 
     std::string line;
     size_t line_number = 0;
+    size_t last_position = 0;
 
-    while (std::getline(file, line)) {
+    while (reader->getline(line)) {
         line_number++;
-        size_t line_bytes = line.length() + 1;  // +1 for newline
 
         // Extract all IP addresses from this line using pre-compiled patterns
         auto ip_addresses = extract_ip_addresses(line, cache);
 
         if (ip_addresses.empty()) {
             // Update progress even if no IPs found
-            progress.add_bytes(line_bytes);
+            size_t current_position = reader->tell();
+            size_t bytes_read = current_position - last_position;
+            last_position = current_position;
+            progress.add_bytes(bytes_read);
             progress.display();
             continue;
         }
@@ -1059,8 +1062,11 @@ std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& c
             entries.push_back(entry);
         }
 
-        // Update progress
-        progress.add_bytes(line_bytes);
+        // Update progress based on actual bytes read (compressed or uncompressed)
+        size_t current_position = reader->tell();
+        size_t bytes_read = current_position - last_position;
+        last_position = current_position;
+        progress.add_bytes(bytes_read);
         progress.display();
     }
 

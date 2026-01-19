@@ -8,6 +8,7 @@
 #include "ipdigger.h"
 #include "config.h"
 #include "enrichment.h"
+#include "compression.h"
 
 void print_usage(const char* program_name) {
     std::cout << "\n";
@@ -70,6 +71,10 @@ void print_usage(const char* program_name) {
     std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
     std::cout << "  --version          Display version information\n\n";
+    std::cout << "Compressed File Support:\n";
+    std::cout << "  Automatically detects and processes compressed files by extension\n";
+    std::cout << "  Supported formats: .gz (gzip), .bz2 (bzip2), .xz (XZ)\n";
+    std::cout << "  Note: Compressed files use single-threaded parsing only\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --no-private /var/log/nginx/access.log\n";
@@ -96,6 +101,8 @@ void print_usage(const char* program_name) {
     std::cout << "  cat ip_list.txt | " << program_name << " --enrich-geo  # Pipe list\n";
     std::cout << "  grep \"Failed\" /var/log/auth.log | " << program_name << " --detect-login\n";
     std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n";
+    std::cout << "  " << program_name << " /var/log/nginx/access.log.gz   # Compressed files\n";
+    std::cout << "  " << program_name << " --top-limit 10 /var/log/auth.log.bz2\n";
     std::cout << "  " << program_name << " --detect-ddos --detect-bruteforce /var/log/auth.log\n";
     std::cout << "  " << program_name << " --detect-ddos --threshold 20 --window 1m /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --detect-scan --detect-spray --enrich-geo /var/log/auth.log\n\n";
@@ -380,14 +387,22 @@ int main(int argc, char* argv[]) {
             bool show_progress = !output_json;
 
             if (files.size() == 1) {
-                // Single file - use parallel parsing for large files
-                if (actual_threads > 1) {
+                // Check if file is compressed (compressed files can't use parallel parsing)
+                bool is_compressed_file = ipdigger::is_compressed(files[0]);
+
+                // Notify user if compressed file and they requested multiple threads
+                if (is_compressed_file && actual_threads > 1 && !output_json) {
+                    std::cerr << "Note: Compressed files use single-threaded parsing\n";
+                }
+
+                // Single file - use parallel parsing for large uncompressed files
+                if (actual_threads > 1 && !is_compressed_file) {
                     entries = ipdigger::parse_file_parallel(
                         files[0], cache, show_progress, detect_login,
                         search_string, search_regex, actual_threads, config.chunk_size_mb
                     );
                 } else {
-                    // Single-threaded
+                    // Single-threaded (either requested or required for compressed files)
                     entries = ipdigger::parse_file(files[0], cache, show_progress, detect_login,
                                                   search_string, search_regex);
                 }
