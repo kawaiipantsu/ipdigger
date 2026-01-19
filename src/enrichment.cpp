@@ -2066,4 +2066,325 @@ void enrich_http_stats(std::map<std::string, IPStats>& stats, const Config& conf
     std::cerr << "\n";
 }
 
+// ============================================================================
+// CIDR Matching Utilities
+// ============================================================================
+
+// Parse IPv4 CIDR and check if IP matches
+static bool match_ipv4_cidr(const std::string& ip, const std::string& cidr) {
+    size_t slash_pos = cidr.find('/');
+    std::string network_str = cidr.substr(0, slash_pos);
+    int prefix_len = 32;
+
+    if (slash_pos != std::string::npos) {
+        try {
+            prefix_len = std::stoi(cidr.substr(slash_pos + 1));
+        } catch (...) {
+            return false;
+        }
+    }
+
+    if (prefix_len < 0 || prefix_len > 32) return false;
+
+    struct in_addr ip_addr, network_addr;
+    if (inet_pton(AF_INET, ip.c_str(), &ip_addr) != 1) return false;
+    if (inet_pton(AF_INET, network_str.c_str(), &network_addr) != 1) return false;
+
+    uint32_t mask = prefix_len == 0 ? 0 : (~0U << (32 - prefix_len));
+    uint32_t ip_int = ntohl(ip_addr.s_addr);
+    uint32_t network_int = ntohl(network_addr.s_addr);
+
+    return (ip_int & mask) == (network_int & mask);
+}
+
+// Parse IPv6 CIDR and check if IP matches
+static bool match_ipv6_cidr(const std::string& ip, const std::string& cidr) {
+    size_t slash_pos = cidr.find('/');
+    std::string network_str = cidr.substr(0, slash_pos);
+    int prefix_len = 128;
+
+    if (slash_pos != std::string::npos) {
+        try {
+            prefix_len = std::stoi(cidr.substr(slash_pos + 1));
+        } catch (...) {
+            return false;
+        }
+    }
+
+    if (prefix_len < 0 || prefix_len > 128) return false;
+
+    struct in6_addr ip_addr, network_addr;
+    if (inet_pton(AF_INET6, ip.c_str(), &ip_addr) != 1) return false;
+    if (inet_pton(AF_INET6, network_str.c_str(), &network_addr) != 1) return false;
+
+    // Compare byte by byte with mask
+    for (int i = 0; i < 16; i++) {
+        int bits = std::min(8, prefix_len - i * 8);
+        if (bits <= 0) break;
+
+        uint8_t mask = bits == 8 ? 0xFF : (0xFF << (8 - bits));
+        if ((ip_addr.s6_addr[i] & mask) != (network_addr.s6_addr[i] & mask)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Check if IP matches CIDR (auto-detect IPv4 or IPv6)
+static bool match_cidr(const std::string& ip, const std::string& cidr) {
+    // Check if it's a direct IP match (no CIDR notation)
+    if (cidr.find('/') == std::string::npos) {
+        return ip == cidr;
+    }
+
+    // Try IPv4 first
+    if (ip.find(':') == std::string::npos && cidr.find(':') == std::string::npos) {
+        return match_ipv4_cidr(ip, cidr);
+    }
+
+    // Try IPv6
+    if (ip.find(':') != std::string::npos && cidr.find(':') != std::string::npos) {
+        return match_ipv6_cidr(ip, cidr);
+    }
+
+    return false;
+}
+
+// ============================================================================
+// THUGSred Threat Intelligence
+// ============================================================================
+
+// THUGSred TI list URLs
+static const std::vector<std::string> THUGSRED_TI_URLS = {
+    "https://blacklist.thugs.red/services/cinsscore-army-list-badrep.csv",
+    "https://blacklist.thugs.red/services/spamhaus-peer-drop-list.csv",
+    "https://blacklist.thugs.red/services/nordvpn/all-addresses.ipv4.csv",
+    "https://blacklist.thugs.red/services/nordvpn/all-addresses.ipv6.csv",
+    "https://blacklist.thugs.red/services/mullvad/all-addresses.ipv4.csv",
+    "https://blacklist.thugs.red/services/mullvad/all-addresses.ipv6.csv",
+    "https://blacklist.thugs.red/ioc-addresses/phishtank-last-7-days.csv"
+};
+
+// Check if cache file is older than specified hours
+static bool is_cache_stale(const std::string& filepath, size_t cache_hours) {
+    struct stat st;
+    if (stat(filepath.c_str(), &st) != 0) {
+        return true;  // File doesn't exist
+    }
+
+    time_t now = time(nullptr);
+    double seconds = difftime(now, st.st_mtime);
+    return seconds > (cache_hours * 3600);  // Convert hours to seconds
+}
+
+// Download file with curl
+static bool download_file(const std::string& url, const std::string& output_path) {
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+
+    FILE* fp = fopen(output_path.c_str(), "wb");
+    if (!fp) {
+        curl_easy_cleanup(curl);
+        return false;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    fclose(fp);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        std::remove(output_path.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+// Get unique cache filename from URL for TI lists
+static std::string get_ti_cache_filename(const std::string& url) {
+    // Hash the URL using SHA256 to create unique filename
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(url.c_str()),
+           url.length(), hash);
+
+    // Convert to hex string (first 16 bytes for shorter filename)
+    std::stringstream ss;
+    ss << "thugsred_ti_";
+    for (int i = 0; i < 16; i++) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    }
+    ss << ".csv";
+
+    return ss.str();
+}
+
+// Ensure cache directory exists
+static void ensure_cache_dir(const std::string& cache_dir) {
+    struct stat st;
+    if (stat(cache_dir.c_str(), &st) != 0) {
+        mkdir(cache_dir.c_str(), 0700);
+    }
+}
+
+// Parse CSV line and return IP/CIDR and message
+static std::pair<std::string, std::string> parse_ti_csv_line(const std::string& line) {
+    // Skip empty lines and comments
+    if (line.empty() || line[0] == '#') {
+        return {"", ""};
+    }
+
+    // Find first comma
+    size_t comma_pos = line.find(',');
+    if (comma_pos == std::string::npos) {
+        return {"", ""};
+    }
+
+    std::string ip_or_cidr = line.substr(0, comma_pos);
+    std::string message = line.substr(comma_pos + 1);
+
+    // Trim whitespace
+    ip_or_cidr.erase(0, ip_or_cidr.find_first_not_of(" \t\r\n"));
+    ip_or_cidr.erase(ip_or_cidr.find_last_not_of(" \t\r\n") + 1);
+    message.erase(0, message.find_first_not_of(" \t\r\n"));
+    message.erase(message.find_last_not_of(" \t\r\n") + 1);
+
+    // Remove quotes from message if present
+    if (message.length() >= 2 && message.front() == '"' && message.back() == '"') {
+        message = message.substr(1, message.length() - 2);
+    }
+
+    return {ip_or_cidr, message};
+}
+
+// Get shortened field name from filename
+static std::string get_field_name_from_url(const std::string& url) {
+    // Extract filename from URL
+    size_t last_slash = url.find_last_of('/');
+    std::string filename;
+    if (last_slash != std::string::npos) {
+        filename = url.substr(last_slash + 1);
+    } else {
+        filename = url;
+    }
+
+    // Remove .csv extension
+    size_t dot_pos = filename.find(".csv");
+    if (dot_pos != std::string::npos) {
+        filename = filename.substr(0, dot_pos);
+    }
+
+    // Create shortened names based on filename patterns
+    if (filename.find("cinsscore") != std::string::npos || filename.find("badrep") != std::string::npos) {
+        return "CINSBadRep";
+    } else if (filename.find("spamhaus") != std::string::npos || filename.find("peer-drop") != std::string::npos) {
+        return "PeerDrop";
+    } else if (filename.find("phishtank") != std::string::npos) {
+        return "PhishTank";
+    } else if (filename.find("nordvpn") != std::string::npos || url.find("nordvpn") != std::string::npos) {
+        if (filename.find("ipv4") != std::string::npos) {
+            return "NordVPN_v4";
+        } else if (filename.find("ipv6") != std::string::npos) {
+            return "NordVPN_v6";
+        }
+    } else if (filename.find("mullvad") != std::string::npos || url.find("mullvad") != std::string::npos) {
+        if (filename.find("ipv4") != std::string::npos) {
+            return "Mullvad_v4";
+        } else if (filename.find("ipv6") != std::string::npos) {
+            return "Mullvad_v6";
+        }
+    }
+
+    // Fallback: use filename with underscores
+    std::replace(filename.begin(), filename.end(), '-', '_');
+    return filename;
+}
+
+// Load and search THUGSred TI lists
+static std::map<std::string, std::string> check_thugsred_ti(const std::string& ip, const std::string& cache_dir, size_t cache_hours) {
+    std::map<std::string, std::string> results;
+
+    // Initialize all fields with "No"
+    for (const auto& url : THUGSRED_TI_URLS) {
+        std::string field_name = get_field_name_from_url(url);
+        results[field_name] = "No";
+    }
+
+    for (const auto& url : THUGSRED_TI_URLS) {
+        std::string filename = get_ti_cache_filename(url);
+        std::string filepath = cache_dir + "/" + filename;
+        std::string field_name = get_field_name_from_url(url);
+
+        // Download if cache is stale
+        if (is_cache_stale(filepath, cache_hours)) {
+            if (!download_file(url, filepath)) {
+                continue;  // Skip this list if download fails (field remains "No")
+            }
+        }
+
+        // Read and search file
+        std::ifstream file(filepath);
+        if (!file.is_open()) continue;  // Field remains "No"
+
+        std::string line;
+        while (std::getline(file, line)) {
+            auto [ip_or_cidr, message] = parse_ti_csv_line(line);
+
+            if (ip_or_cidr.empty()) continue;
+
+            if (match_cidr(ip, ip_or_cidr)) {
+                results[field_name] = "Yes";
+                break;  // Found in this list, move to next list
+            }
+        }
+
+        file.close();
+    }
+
+    return results;
+}
+
+// Main THUGSred TI enrichment function for stats
+void enrich_thugsred_ti_stats(std::map<std::string, IPStats>& stats, const std::string& cache_dir, size_t cache_hours) {
+    if (stats.empty()) return;
+
+    ensure_cache_dir(cache_dir);
+
+    // Track progress
+    std::atomic<size_t> completed(0);
+    size_t total = stats.size();
+
+    std::cerr << "\nEnriching IPs with THUGSred Threat Intelligence...\n";
+    std::cerr << "Cache directory: " << cache_dir << "\n";
+    std::cerr << "Cache TTL: " << cache_hours << " hours\n";
+
+    for (auto& [ip, stat] : stats) {
+        // Initialize enrichment if not exists
+        if (!stat.enrichment) {
+            stat.enrichment = std::make_shared<EnrichmentData>();
+            stat.enrichment->ip_address = ip;
+        }
+
+        auto ti_results = check_thugsred_ti(ip, cache_dir, cache_hours);
+        for (const auto& [field_name, value] : ti_results) {
+            stat.enrichment->data[field_name] = value;
+        }
+
+        completed++;
+        if (completed % 10 == 0 || completed == total) {
+            std::cerr << "\rProcessed: " << completed << "/" << total;
+        }
+    }
+
+    std::cerr << "\n";
+}
+
 } // namespace ipdigger

@@ -32,6 +32,7 @@ Config::Config() {
     cache_dir = get_config_directory() + "/cache";
     cache_ttl_hours = 24;
     cache_enabled = true;
+    thugsred_ti_cache_hours = 24;  // Default: refresh daily
 
     // MaxMind settings
     maxmind_db_dir = get_config_directory() + "/maxmind";
@@ -114,7 +115,8 @@ bool create_example_config(const std::string& config_path) {
     file << "# Cache configuration\n";
     file << "cache_dir = ~/.ipdigger/cache\n";
     file << "cache_ttl_hours = 24         # Cache validity period\n";
-    file << "cache_enabled = true         # Enable/disable caching\n\n";
+    file << "cache_enabled = true         # Enable/disable caching\n";
+    file << "thugsred_ti_cache_hours = 24 # THUGSred TI list refresh interval (hours)\n\n";
     file << "[maxmind]\n";
     file << "# MaxMind GeoIP database settings (for --enrich-geo)\n";
     file << "# Get free GeoLite2 account at https://www.maxmind.com/en/geolite2/signup\n";
@@ -351,6 +353,13 @@ Config load_config_from_file(const std::string& config_path) {
             if (cache.count("cache_ttl_hours")) {
                 try {
                     config.cache_ttl_hours = std::stoul(cache["cache_ttl_hours"]);
+                } catch (...) {
+                    // Keep default
+                }
+            }
+            if (cache.count("thugsred_ti_cache_hours")) {
+                try {
+                    config.thugsred_ti_cache_hours = std::stoul(cache["thugsred_ti_cache_hours"]);
                 } catch (...) {
                     // Keep default
                 }

@@ -47,6 +47,7 @@ struct Config {
     std::string cache_dir;      // Cache directory path
     size_t cache_ttl_hours;     // Cache time-to-live in hours
     bool cache_enabled;         // Enable/disable caching
+    size_t thugsred_ti_cache_hours;  // THUGSred TI cache TTL in hours (default: 24)
 
     // MaxMind settings
     std::string maxmind_db_dir;         // MaxMind database directory

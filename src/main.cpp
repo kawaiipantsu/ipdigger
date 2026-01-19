@@ -10,7 +10,7 @@
 #include "enrichment.h"
 #include "compression.h"
 
-void print_usage(const char* program_name) {
+void print_banner() {
     std::cout << "\n";
     std::cout << "     ___________ ____________\n";
     std::cout << "    |     +      )._______.-'\n";
@@ -23,6 +23,10 @@ void print_usage(const char* program_name) {
     std::cout << "    THUGSred Hacking Community\n";
     std::cout << "       https://thugs.red\n";
     std::cout << "\n";
+}
+
+void print_usage(const char* program_name) {
+    print_banner();
     std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n";
     std::cout << "   or: " << program_name << " [OPTIONS] -\n";
     std::cout << "   or: <command> | " << program_name << " [OPTIONS]\n\n";
@@ -36,6 +40,7 @@ void print_usage(const char* program_name) {
     std::cout << "  --enrich-ping      Enrich IPs with ping response time and availability\n";
     std::cout << "  --enrich-tls       Enrich IPs with TLS certificate data (CN, dates, version, keysize)\n";
     std::cout << "  --enrich-http      Enrich IPs with HTTP server data (port, status, server, CSP, title)\n";
+    std::cout << "  --enrich-thugsred-ti Enrich IPs with THUGSred Threat Intelligence (cached 24h)\n";
     std::cout << "  --follow-redirects Follow HTTP redirects when using --enrich-http\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
     std::cout << "  --detect-ddos      Detect DDoS attack patterns (high volume in short time)\n";
@@ -58,26 +63,50 @@ void print_usage(const char* program_name) {
     std::cout << "  --limit <N>        Show only latest N entries\n";
     std::cout << "  --time-range <from,to>  Filter entries by timestamp (comma-separated)\n";
     std::cout << "                          Formats: Unix timestamp, ISO date, relative time\n";
-    std::cout << "                          Omit 'from' for open start: \",24hours\"\n";
-    std::cout << "                          Omit 'to' for open end: \"2024-01-13,\"\n";
-    std::cout << "                          Relative: 24hours, 7days, 1week, 30minutes\n";
+    std::cout << "                          Omit 'from' for open start: \",2024-01-14\" (entries up to date)\n";
+    std::cout << "                          Omit 'to' for open end: \"24hours,\" (entries from time ago to now)\n";
+    std::cout << "                          Relative: 24hours, 7days, 1week, 30minutes (time ago)\n";
     std::cout << "                          Examples:\n";
     std::cout << "                            --time-range \"1705136400,1705222800\"\n";
     std::cout << "                            --time-range \"2024-01-13 00:00:00,2024-01-14 00:00:00\"\n";
-    std::cout << "                            --time-range \",24hours\"\n";
-    std::cout << "                            --time-range \"7days,1day\"\n";
+    std::cout << "                            --time-range \"24hours,\" (last 24 hours)\n";
+    std::cout << "                            --time-range \"7days,1day\" (from 7 days ago to 1 day ago)\n";
     std::cout << "  --include-no-timestamp  Include entries without timestamps in time-range filter\n";
+    std::cout << "  --group-by-asn     Group results by ASN (auto-enables --enrich-geo)\n";
+    std::cout << "  --group-by-country Group results by country (auto-enables --enrich-geo)\n";
+    std::cout << "  --group-by-org     Group results by organization (auto-enables --enrich-geo)\n";
     std::cout << "  --single-threaded  Force single-threaded parsing (disables parallelism)\n";
     std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
+    std::cout << "  --help-extended    Display extended help with examples\n";
     std::cout << "  --version          Display version information\n\n";
+    std::cout << "For examples and more detailed information, use: " << program_name << " --help-extended\n\n";
+    std::cout << "Configuration:\n";
+    std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
+    std::cout << "  Cache dir:   ~/.ipdigger/cache/\n";
+}
+
+void print_extended_help(const char* program_name) {
+    print_banner();
+    std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n";
+    std::cout << "   or: " << program_name << " [OPTIONS] -\n";
+    std::cout << "   or: <command> | " << program_name << " [OPTIONS]\n\n";
+    std::cout << "For option list, use: " << program_name << " --help\n\n";
     std::cout << "Compressed File Support:\n";
     std::cout << "  Automatically detects and processes compressed files by extension\n";
     std::cout << "  Supported formats: .gz (gzip), .bz2 (bzip2), .xz (XZ)\n";
     std::cout << "  Note: Compressed files use single-threaded parsing only\n\n";
-    std::cout << "Examples:\n";
+    std::cout << "Group-By Features:\n";
+    std::cout << "  --group-by-asn     Groups IPs by Autonomous System Number\n";
+    std::cout << "  --group-by-country Groups IPs by country code\n";
+    std::cout << "  --group-by-org     Groups IPs by organization/netname\n";
+    std::cout << "  Output shows group headers with indented IP details\n\n";
+    std::cout << "Basic Examples:\n";
     std::cout << "  " << program_name << " /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --no-private /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --top-limit 20 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --limit 100 /var/log/auth.log\n\n";
+    std::cout << "Enrichment Examples:\n";
     std::cout << "  " << program_name << " --enrich-geo /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
@@ -86,26 +115,36 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --enrich-tls /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --enrich-http /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --enrich-http --follow-redirects /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --enrich-thugsred-ti /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-limit 10 /var/log/auth.log\n\n";
+    std::cout << "Group-By Examples:\n";
+    std::cout << "  " << program_name << " --group-by-country /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --group-by-asn --top-limit 10 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --group-by-org --output-json /var/log/nginx/access.log\n\n";
+    std::cout << "Search and Filter Examples:\n";
     std::cout << "  " << program_name << " --search \"Failed password\" /var/log/auth.log\n";
     std::cout << "  " << program_name << " --search-regex \"error|warning\" /var/log/nginx/error.log\n";
-    std::cout << "  " << program_name << " --enrich-geo --enrich-rdns /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --enrich-geo --enrich-abuseipdb --top-limit 10 /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --enrich-geo --output-geomap /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --top-limit 20 --output-json \"/var/log/*.log\"\n";
-    std::cout << "  " << program_name << " --limit 100 /var/log/auth.log\n";
-    std::cout << "  " << program_name << " --time-range \",24hours\" /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --time-range \"24hours,\" /var/log/auth.log (last 24 hours)\n";
     std::cout << "  " << program_name << " --time-range \"2024-01-13,2024-01-14\" --enrich-geo /var/log/auth.log\n";
-    std::cout << "  echo \"192.168.1.1\" | " << program_name << "        # From stdin\n";
-    std::cout << "  cat ip_list.txt | " << program_name << " --enrich-geo  # Pipe list\n";
-    std::cout << "  grep \"Failed\" /var/log/auth.log | " << program_name << " --detect-login\n";
-    std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n";
-    std::cout << "  " << program_name << " /var/log/nginx/access.log.gz   # Compressed files\n";
-    std::cout << "  " << program_name << " --top-limit 10 /var/log/auth.log.bz2\n";
+    std::cout << "  " << program_name << " --geo-filter-none-eu /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n\n";
+    std::cout << "Attack Detection Examples:\n";
     std::cout << "  " << program_name << " --detect-ddos --detect-bruteforce /var/log/auth.log\n";
     std::cout << "  " << program_name << " --detect-ddos --threshold 20 --window 1m /var/log/nginx/access.log\n";
     std::cout << "  " << program_name << " --detect-scan --detect-spray --enrich-geo /var/log/auth.log\n\n";
+    std::cout << "Compressed Files and Multiple Files:\n";
+    std::cout << "  " << program_name << " /var/log/nginx/access.log.gz\n";
+    std::cout << "  " << program_name << " --top-limit 10 /var/log/auth.log.bz2\n";
+    std::cout << "  " << program_name << " \"/var/log/*.log\"\n";
+    std::cout << "  " << program_name << " --top-limit 20 --output-json \"/var/log/*.log\"\n\n";
+    std::cout << "Stdin/Pipe Examples:\n";
+    std::cout << "  echo \"192.168.1.1\" | " << program_name << "\n";
+    std::cout << "  cat ip_list.txt | " << program_name << " --enrich-geo\n";
+    std::cout << "  grep \"Failed\" /var/log/auth.log | " << program_name << " --detect-login\n\n";
+    std::cout << "Output Formats:\n";
+    std::cout << "  " << program_name << " --output-json /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --enrich-geo --output-geomap /var/log/auth.log\n\n";
     std::cout << "Configuration:\n";
     std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
     std::cout << "  Cache dir:   ~/.ipdigger/cache/\n";
@@ -126,6 +165,13 @@ void print_version() {
     std::cout << "\n";
     std::cout << "A secure log analysis tool for extracting IP addresses\n";
 }
+
+enum class GroupByType {
+    NONE,
+    ASN,
+    COUNTRY,
+    ORGANIZATION
+};
 
 int main(int argc, char* argv[]) {
     // Load configuration
@@ -150,6 +196,7 @@ int main(int argc, char* argv[]) {
     bool enable_ping = false;
     bool enable_tls = false;
     bool enable_http = false;
+    bool enable_thugsred_ti = false;
     bool follow_redirects = false;
     bool no_private = false;
     bool no_reserved = false;
@@ -176,11 +223,17 @@ int main(int argc, char* argv[]) {
     size_t attack_threshold = 10;  // Default threshold
     std::string attack_window = "5m";  // Default 5 minutes
 
+    // Group-by functionality
+    GroupByType group_by = GroupByType::NONE;
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
         if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
+            return 0;
+        } else if (arg == "--help-extended") {
+            print_extended_help(argv[0]);
             return 0;
         } else if (arg == "--version" || arg == "-v") {
             print_version();
@@ -203,6 +256,8 @@ int main(int argc, char* argv[]) {
             enable_tls = true;
         } else if (arg == "--enrich-http") {
             enable_http = true;
+        } else if (arg == "--enrich-thugsred-ti") {
+            enable_thugsred_ti = true;
         } else if (arg == "--follow-redirects") {
             follow_redirects = true;
         } else if (arg == "--no-private") {
@@ -280,6 +335,12 @@ int main(int argc, char* argv[]) {
             search_regex = argv[++i];
         } else if (arg == "--single-threaded") {
             single_threaded = true;
+        } else if (arg == "--group-by-asn") {
+            group_by = GroupByType::ASN;
+        } else if (arg == "--group-by-country") {
+            group_by = GroupByType::COUNTRY;
+        } else if (arg == "--group-by-org") {
+            group_by = GroupByType::ORGANIZATION;
         } else if (arg == "--threads") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --threads requires a number argument\n";
@@ -351,6 +412,11 @@ int main(int argc, char* argv[]) {
 
     // Auto-enable geo enrichment if geo filtering or geomap output is requested
     if (geo_filter_none_eu || geo_filter_none_gdpr || output_geomap) {
+        enable_geo = true;
+    }
+
+    // Auto-enable enrichment based on group-by type
+    if (group_by == GroupByType::ASN || group_by == GroupByType::COUNTRY || group_by == GroupByType::ORGANIZATION) {
         enable_geo = true;
     }
 
@@ -565,7 +631,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Enrich statistics if requested
-        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping || enable_tls || enable_http) {
+        if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping || enable_tls || enable_http || enable_thugsred_ti) {
             if (enable_geo) {
                 if (!output_json) std::cout << "Enriching with GeoIP data...\n";
                 ipdigger::enrich_geoip_stats(stats, config);
@@ -593,6 +659,10 @@ int main(int argc, char* argv[]) {
 
             if (enable_http) {
                 ipdigger::enrich_http_stats(stats, config, follow_redirects);
+            }
+
+            if (enable_thugsred_ti) {
+                ipdigger::enrich_thugsred_ti_stats(stats, config.cache_dir, config.thugsred_ti_cache_hours);
             }
         }
 
@@ -661,9 +731,27 @@ int main(int argc, char* argv[]) {
         if (output_geomap) {
             ipdigger::print_stats_geomap(stats, search_active);
         } else if (output_json) {
-            ipdigger::print_stats_json(stats, search_active);
+            // JSON output with optional grouping
+            if (group_by == GroupByType::ASN) {
+                ipdigger::print_stats_json_grouped_by_asn(stats, search_active);
+            } else if (group_by == GroupByType::COUNTRY) {
+                ipdigger::print_stats_json_grouped_by_country(stats, search_active);
+            } else if (group_by == GroupByType::ORGANIZATION) {
+                ipdigger::print_stats_json_grouped_by_org(stats, search_active);
+            } else {
+                ipdigger::print_stats_json(stats, search_active);
+            }
         } else {
-            ipdigger::print_stats_table(stats, search_active);
+            // Table output with optional grouping
+            if (group_by == GroupByType::ASN) {
+                ipdigger::print_stats_table_grouped_by_asn(stats, search_active);
+            } else if (group_by == GroupByType::COUNTRY) {
+                ipdigger::print_stats_table_grouped_by_country(stats, search_active);
+            } else if (group_by == GroupByType::ORGANIZATION) {
+                ipdigger::print_stats_table_grouped_by_org(stats, search_active);
+            } else {
+                ipdigger::print_stats_table(stats, search_active);
+            }
         }
 
         return 0;

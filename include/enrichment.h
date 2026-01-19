@@ -279,6 +279,15 @@ void enrich_http_stats(std::map<std::string, IPStats>& stats, const Config& conf
  */
 std::map<std::string, std::string> http_lookup(const std::string& ip_address, bool follow_redirects = true);
 
+/**
+ * Enrich statistics with THUGSred Threat Intelligence data
+ * Downloads and caches threat intel lists, checks IPs against them
+ * @param stats Map of IP statistics (modified in place)
+ * @param cache_dir Directory to cache downloaded lists
+ * @param cache_hours Cache TTL in hours (default: 24)
+ */
+void enrich_thugsred_ti_stats(std::map<std::string, IPStats>& stats, const std::string& cache_dir, size_t cache_hours = 24);
+
 } // namespace ipdigger
 
 #endif // IPDIGGER_ENRICHMENT_H

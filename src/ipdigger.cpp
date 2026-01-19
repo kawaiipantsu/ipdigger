@@ -1802,4 +1802,320 @@ void print_stats_geomap(const std::map<std::string, IPStats>& stats, bool show_s
     std::cout << "}\n";
 }
 
+void print_stats_table_grouped_by_asn(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    if (stats.empty()) {
+        std::cout << "No IP addresses found.\n";
+        return;
+    }
+
+    // Group by ASN
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string asn = "Unknown ASN";
+        if (stat.enrichment && stat.enrichment->data.count("asn")) {
+            asn = stat.enrichment->data.at("asn");  // Already has "AS" prefix
+            if (stat.enrichment->data.count("org")) {
+                asn += " (" + stat.enrichment->data.at("org") + ")";
+            }
+        }
+        grouped[asn][ip] = stat;
+    }
+
+    // Sort groups by total count (descending)
+    std::vector<std::pair<std::string, size_t>> group_counts;
+    for (const auto& [group_name, group_stats] : grouped) {
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        group_counts.push_back({group_name, total_count});
+    }
+    std::sort(group_counts.begin(), group_counts.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    // Print each group
+    for (const auto& [group_name, total_count] : group_counts) {
+        std::cout << "\n" << group_name << " (Total: " << total_count << " requests)\n";
+        std::cout << std::string(80, '=') << "\n";
+        print_stats_table(grouped[group_name], show_search_hits);
+    }
+}
+
+void print_stats_table_grouped_by_country(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    if (stats.empty()) {
+        std::cout << "No IP addresses found.\n";
+        return;
+    }
+
+    // Group by country
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string country = "Unknown Country";
+        if (stat.enrichment && stat.enrichment->data.count("country")) {
+            country = stat.enrichment->data.at("country");
+            if (stat.enrichment->data.count("cc")) {
+                country += " (" + stat.enrichment->data.at("cc") + ")";
+            }
+        }
+        grouped[country][ip] = stat;
+    }
+
+    // Sort groups by total count (descending)
+    std::vector<std::pair<std::string, size_t>> group_counts;
+    for (const auto& [group_name, group_stats] : grouped) {
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        group_counts.push_back({group_name, total_count});
+    }
+    std::sort(group_counts.begin(), group_counts.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    // Print each group
+    for (const auto& [group_name, total_count] : group_counts) {
+        std::cout << "\n" << group_name << " (Total: " << total_count << " requests)\n";
+        std::cout << std::string(80, '=') << "\n";
+        print_stats_table(grouped[group_name], show_search_hits);
+    }
+}
+
+void print_stats_table_grouped_by_org(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    if (stats.empty()) {
+        std::cout << "No IP addresses found.\n";
+        return;
+    }
+
+    // Group by organization (from geo enrichment)
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string org = "Unknown Organization";
+        if (stat.enrichment && stat.enrichment->data.count("org")) {
+            org = stat.enrichment->data.at("org");
+        }
+        grouped[org][ip] = stat;
+    }
+
+    // Sort groups by total count (descending)
+    std::vector<std::pair<std::string, size_t>> group_counts;
+    for (const auto& [group_name, group_stats] : grouped) {
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        group_counts.push_back({group_name, total_count});
+    }
+    std::sort(group_counts.begin(), group_counts.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    // Print each group
+    for (const auto& [group_name, total_count] : group_counts) {
+        std::cout << "\n" << group_name << " (Total: " << total_count << " requests)\n";
+        std::cout << std::string(80, '=') << "\n";
+        print_stats_table(grouped[group_name], show_search_hits);
+    }
+}
+
+void print_stats_json_grouped_by_asn(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    (void)show_search_hits;  // Reserved for future use
+
+    // Group by ASN
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string asn = "unknown";
+        if (stat.enrichment && stat.enrichment->data.count("asn")) {
+            asn = stat.enrichment->data.at("asn");
+        }
+        grouped[asn][ip] = stat;
+    }
+
+    std::cout << "{\n";
+    std::cout << "  \"groups\": [\n";
+
+    size_t group_idx = 0;
+    for (const auto& [asn, group_stats] : grouped) {
+        if (group_idx > 0) std::cout << ",\n";
+
+        std::cout << "    {\n";
+        std::cout << "      \"asn\": \"" << json_escape(asn) << "\",\n";
+
+        // Add AS org if available
+        if (!group_stats.empty()) {
+            const auto& first_stat = group_stats.begin()->second;
+            if (first_stat.enrichment && first_stat.enrichment->data.count("org")) {
+                std::cout << "      \"org\": \"" << json_escape(first_stat.enrichment->data.at("org")) << "\",\n";
+            }
+        }
+
+        // Calculate total count for this group
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        std::cout << "      \"total_count\": " << total_count << ",\n";
+
+        std::cout << "      \"ips\": [\n";
+        size_t ip_idx = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            if (ip_idx > 0) std::cout << ",\n";
+            std::cout << "        {\n";
+            std::cout << "          \"ip_address\": \"" << json_escape(ip) << "\",\n";
+            std::cout << "          \"count\": " << stat.count << ",\n";
+            std::cout << "          \"first_seen\": ";
+            if (stat.first_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.first_seen) << "\"";
+            }
+            std::cout << ",\n";
+            std::cout << "          \"last_seen\": ";
+            if (stat.last_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.last_seen) << "\"";
+            }
+            std::cout << "\n        }";
+            ip_idx++;
+        }
+        std::cout << "\n      ]\n";
+        std::cout << "    }";
+        group_idx++;
+    }
+
+    std::cout << "\n  ]\n";
+    std::cout << "}\n";
+}
+
+void print_stats_json_grouped_by_country(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    (void)show_search_hits;  // Reserved for future use
+
+    // Group by country
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string country_code = "unknown";
+        if (stat.enrichment && stat.enrichment->data.count("cc")) {
+            country_code = stat.enrichment->data.at("cc");
+        }
+        grouped[country_code][ip] = stat;
+    }
+
+    std::cout << "{\n";
+    std::cout << "  \"groups\": [\n";
+
+    size_t group_idx = 0;
+    for (const auto& [cc, group_stats] : grouped) {
+        if (group_idx > 0) std::cout << ",\n";
+
+        std::cout << "    {\n";
+        std::cout << "      \"country_code\": \"" << json_escape(cc) << "\",\n";
+
+        // Add country name if available
+        if (!group_stats.empty()) {
+            const auto& first_stat = group_stats.begin()->second;
+            if (first_stat.enrichment && first_stat.enrichment->data.count("country")) {
+                std::cout << "      \"country\": \"" << json_escape(first_stat.enrichment->data.at("country")) << "\",\n";
+            }
+        }
+
+        // Calculate total count for this group
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        std::cout << "      \"total_count\": " << total_count << ",\n";
+
+        std::cout << "      \"ips\": [\n";
+        size_t ip_idx = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            if (ip_idx > 0) std::cout << ",\n";
+            std::cout << "        {\n";
+            std::cout << "          \"ip_address\": \"" << json_escape(ip) << "\",\n";
+            std::cout << "          \"count\": " << stat.count << ",\n";
+            std::cout << "          \"first_seen\": ";
+            if (stat.first_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.first_seen) << "\"";
+            }
+            std::cout << ",\n";
+            std::cout << "          \"last_seen\": ";
+            if (stat.last_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.last_seen) << "\"";
+            }
+            std::cout << "\n        }";
+            ip_idx++;
+        }
+        std::cout << "\n      ]\n";
+        std::cout << "    }";
+        group_idx++;
+    }
+
+    std::cout << "\n  ]\n";
+    std::cout << "}\n";
+}
+
+void print_stats_json_grouped_by_org(const std::map<std::string, IPStats>& stats, bool show_search_hits) {
+    (void)show_search_hits;  // Reserved for future use
+
+    // Group by organization (from geo enrichment)
+    std::map<std::string, std::map<std::string, IPStats>> grouped;
+    for (const auto& [ip, stat] : stats) {
+        std::string org = "unknown";
+        if (stat.enrichment && stat.enrichment->data.count("org")) {
+            org = stat.enrichment->data.at("org");
+        }
+        grouped[org][ip] = stat;
+    }
+
+    std::cout << "{\n";
+    std::cout << "  \"groups\": [\n";
+
+    size_t group_idx = 0;
+    for (const auto& [org, group_stats] : grouped) {
+        if (group_idx > 0) std::cout << ",\n";
+
+        std::cout << "    {\n";
+        std::cout << "      \"organization\": \"" << json_escape(org) << "\",\n";
+
+        // Calculate total count for this group
+        size_t total_count = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            total_count += stat.count;
+        }
+        std::cout << "      \"total_count\": " << total_count << ",\n";
+
+        std::cout << "      \"ips\": [\n";
+        size_t ip_idx = 0;
+        for (const auto& [ip, stat] : group_stats) {
+            if (ip_idx > 0) std::cout << ",\n";
+            std::cout << "        {\n";
+            std::cout << "          \"ip_address\": \"" << json_escape(ip) << "\",\n";
+            std::cout << "          \"count\": " << stat.count << ",\n";
+            std::cout << "          \"first_seen\": ";
+            if (stat.first_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.first_seen) << "\"";
+            }
+            std::cout << ",\n";
+            std::cout << "          \"last_seen\": ";
+            if (stat.last_seen.empty()) {
+                std::cout << "null";
+            } else {
+                std::cout << "\"" << json_escape(stat.last_seen) << "\"";
+            }
+            std::cout << "\n        }";
+            ip_idx++;
+        }
+        std::cout << "\n      ]\n";
+        std::cout << "    }";
+        group_idx++;
+    }
+
+    std::cout << "\n  ]\n";
+    std::cout << "}\n";
+}
+
 } // namespace ipdigger
