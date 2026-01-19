@@ -1,0 +1,316 @@
+.TH IPDIGGER 1 "2026-01-19" "IPDigger 2.2.0" "User Commands"
+.SH NAME
+ipdigger \- extract and enrich IP addresses from log files
+.SH SYNOPSIS
+.B ipdigger
+[\fIOPTIONS\fR] <\fIfilename\fR>
+.br
+.B ipdigger
+[\fIOPTIONS\fR] \fB-\fR
+.br
+.B <command> |
+.B ipdigger
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B IPDigger
+is a secure C++ log analysis tool for extracting and enriching IP addresses from log files.
+It supports IPv4 and IPv6 extraction, geolocation, threat intelligence, WHOIS data, reverse DNS,
+TLS/SSL inspection, HTTP detection, login tracking, time-range filtering, and multi-threaded
+parsing for high-performance analysis of large log files.
+.SH OPTIONS
+.SS "Output Formats"
+.TP
+.B \-\-output\-json
+Output results in JSON format instead of ASCII tables.
+.TP
+.B \-\-output\-geomap
+Output as GeoJSON map (requires \fB\-\-enrich\-geo\fR). Compatible with Leaflet, Mapbox, QGIS.
+.SS "Enrichment Options"
+.TP
+.B \-\-enrich\-geo
+Enrich IPs with geolocation data from MaxMind GeoLite2 (country, city, ASN, coordinates).
+.TP
+.B \-\-enrich\-rdns
+Enrich IPs with reverse DNS hostname lookups.
+.TP
+.B \-\-enrich\-abuseipdb
+Enrich IPs with AbuseIPDB threat intelligence (abuse score, reports, Tor exit node detection).
+.TP
+.B \-\-enrich\-whois
+Enrich IPs with WHOIS data (network name, abuse contacts, CIDR, admin info).
+.TP
+.B \-\-enrich\-ping
+Enrich IPs with ping response time measurement and host availability.
+.TP
+.B \-\-enrich\-tls
+Enrich IPs with TLS/SSL certificate data (CN, issuer, expiry dates, version, key size).
+.TP
+.B \-\-enrich\-http
+Enrich IPs with HTTP server data (port, status code, server header, CSP, page title).
+.TP
+.B \-\-follow\-redirects
+Follow HTTP redirects when using \fB\-\-enrich\-http\fR (disabled by default).
+.SS "Filtering Options"
+.TP
+.B \-\-no\-private
+Exclude private/local network addresses (RFC 1918 ranges).
+.TP
+.B \-\-no\-reserved
+Exclude all reserved IP addresses (private, loopback, multicast, documentation ranges).
+.TP
+.B \-\-no\-ipv4
+Exclude IPv4 addresses from output.
+.TP
+.B \-\-no\-ipv6
+Exclude IPv6 addresses from output.
+.TP
+.B \-\-geo\-filter\-none\-eu
+Filter to show only IPs outside the EU (auto-enables \fB\-\-enrich\-geo\fR).
+.TP
+.B \-\-geo\-filter\-none\-gdpr
+Filter to show only IPs outside GDPR regions (EU + EEA + UK + CH).
+.TP
+.B \-\-top\-limit \fIN\fR
+Show only top N IPs sorted by occurrence count.
+.TP
+.B \-\-limit \fIN\fR
+Show only latest N entries from the log file.
+.TP
+.B \-\-time\-range \fIfrom\fR,\fIto\fR
+Filter entries by timestamp. Supports Unix timestamps, ISO 8601 dates, and relative times.
+.br
+Examples: "2024-01-13,2024-01-14", ",24hours", "7days,1day", "1705136400,1705222800"
+.br
+Relative time units: seconds, minutes, hours, days, weeks, months, years (or short forms: s, m, h, d, w, mo, yr)
+.TP
+.B \-\-include\-no\-timestamp
+Include entries without timestamps when using \fB\-\-time\-range\fR (excluded by default).
+.SS "Search and Detection"
+.TP
+.B \-\-detect\-login
+Detect and track login attempts (success/failed) in authentication logs.
+.TP
+.B \-\-search \fIstring\fR
+Filter lines by literal string (case-insensitive) and count hits per IP.
+.TP
+.B \-\-search\-regex \fIpattern\fR
+Filter lines by regex pattern (case-insensitive) and count hits per IP.
+.SS "Performance Options"
+.TP
+.B \-\-single\-threaded
+Force single-threaded parsing (disables multi-threaded parallelism).
+.TP
+.B \-\-threads \fIN\fR
+Number of threads for parsing (default: auto-detect CPU cores).
+.SS "General Options"
+.TP
+.B \-h, \-\-help
+Display help message and exit.
+.TP
+.B \-v, \-\-version
+Display version information and exit.
+.SH EXAMPLES
+.SS "Basic Usage"
+.TP
+Extract IPs from a log file:
+.B ipdigger /var/log/nginx/access.log
+.TP
+Filter private IPs:
+.B ipdigger \-\-no\-private /var/log/nginx/access.log
+.SS "Stdin/Pipe Usage"
+.TP
+Pipe a single IP:
+.B echo "192.168.1.1" | ipdigger
+.TP
+Pipe a list of IPs:
+.B cat ip_list.txt | ipdigger \-\-enrich\-geo
+.TP
+Filter logs then analyze:
+.B grep "Failed password" /var/log/auth.log | ipdigger \-\-detect\-login
+.TP
+Chain with other commands:
+.B tail \-1000 /var/log/nginx/access.log | ipdigger \-\-no\-private \-\-top\-limit 10
+.TP
+Using explicit stdin marker:
+.B cat /var/log/auth.log | ipdigger \- \-\-output\-json
+.SS "Geolocation and Mapping"
+.TP
+Add geolocation data:
+.B ipdigger \-\-enrich\-geo /var/log/auth.log
+.TP
+Create interactive attack map:
+.B ipdigger \-\-enrich\-geo \-\-output\-geomap /var/log/auth.log > attack-map.geojson
+.TP
+Top 20 non-EU IPs:
+.B ipdigger \-\-geo\-filter\-none\-eu \-\-top\-limit 20 /var/log/auth.log
+.SS "Threat Intelligence"
+.TP
+Check abuse scores:
+.B ipdigger \-\-enrich\-abuseipdb \-\-detect\-login /var/log/auth.log
+.TP
+Full enrichment for incident response:
+.B ipdigger \-\-enrich\-geo \-\-enrich\-rdns \-\-enrich\-whois \-\-enrich\-abuseipdb \-\-output\-json /var/log/auth.log
+.SS "Time-Range Filtering"
+.TP
+Last 24 hours only:
+.B ipdigger \-\-time\-range ",24hours" /var/log/auth.log
+.TP
+Specific incident window:
+.B ipdigger \-\-time\-range "2024-01-13 14:30:00,2024-01-13 15:45:00" \-\-detect\-login /var/log/auth.log
+.TP
+Last week's activity:
+.B ipdigger \-\-time\-range "7days,1day" \-\-enrich\-geo /var/log/nginx/access.log
+.TP
+Since deployment:
+.B ipdigger \-\-time\-range "2024-01-13 10:00:00," /var/log/app.log
+.SS "Web Server Discovery"
+.TP
+Discover web servers:
+.B ipdigger \-\-enrich\-http \-\-enrich\-tls \-\-top\-limit 10 /var/log/nginx/access.log
+.SS "Search and Pattern Matching"
+.TP
+Failed login attempts:
+.B ipdigger \-\-search "Failed password" /var/log/auth.log
+.TP
+Multiple patterns with regex:
+.B ipdigger \-\-search\-regex "error|warning|critical" /var/log/nginx/error.log
+.SS "Multi-File Processing"
+.TP
+Process multiple files with glob patterns (quote the pattern):
+.B ipdigger "/var/log/*.log"
+.TP
+Top 20 IPs from multiple nginx logs:
+.B ipdigger \-\-top\-limit 20 "/var/log/nginx/*.log"
+.SH CONFIGURATION
+.TP
+.B ~/.ipdigger/settings.conf
+Configuration file for API keys, caching, and performance tuning.
+.TP
+.B ~/.ipdigger/cache/
+Cache directory for enrichment data (MaxMind databases, enrichment responses).
+.TP
+.B ~/.ipdigger/maxmind/
+MaxMind GeoLite2 database directory.
+.PP
+Example configuration:
+.nf
+[enrichment]
+parallel_requests = 10
+rdns_threads = 4
+
+[performance]
+parsing_threads = 0        # 0 = auto-detect (recommended)
+chunk_size_mb = 10         # Chunk size for parallel parsing
+
+[cache]
+enabled = true
+cache_ttl_hours = 24
+
+[maxmind]
+account_id = YOUR_ACCOUNT_ID
+license_key = YOUR_LICENSE_KEY
+
+[abuseipdb]
+api_key = YOUR_API_KEY
+.fi
+.SH FILES
+.TP
+.B ~/.ipdigger/settings.conf
+User configuration file
+.TP
+.B ~/.ipdigger/cache/
+Enrichment cache directory
+.TP
+.B ~/.ipdigger/maxmind/
+MaxMind GeoLite2 database directory
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error (invalid arguments, file not found, parsing error)
+.SH SECURITY
+IPDigger is compiled with full security hardening:
+.IP \(bu 2
+Position Independent Executable (PIE) for ASLR
+.IP \(bu 2
+Full RELRO (RELocation Read-Only) protection
+.IP \(bu 2
+Stack canary protection
+.IP \(bu 2
+Non-executable stack
+.IP \(bu 2
+Format string vulnerability prevention
+.SH PERFORMANCE
+.PP
+IPDigger uses multi-threaded parsing for large files (>10MB):
+.IP \(bu 2
+3-5x speedup from pre-compiled regex patterns
+.IP \(bu 2
+8-20x speedup from multi-threading on 8+ core systems
+.IP \(bu 2
+Real-time progress bar with ETA for large files
+.IP \(bu 2
+Automatic CPU core detection for optimal thread count
+.SH EXAMPLES OF TIME FORMATS
+.PP
+Time-range filtering supports multiple formats:
+.TP
+.B Unix timestamp
+1705136400
+.TP
+.B ISO 8601
+2024-01-13T12:34:56Z
+.TP
+.B Common format
+2024-01-13 12:34:56
+.TP
+.B Date only
+2024-01-13 (implies 00:00:00)
+.TP
+.B Relative times
+30minutes, 24hours, 7days, 1week, 2months, 1year
+.br
+Short forms: 30m, 24h, 7d, 1w, 2mo, 1yr
+.SH DATE FORMAT SUPPORT
+.PP
+IPDigger automatically detects and parses these timestamp formats:
+.IP \(bu 2
+Common format: 2024-01-13 12:34:56
+.IP \(bu 2
+ISO 8601/RFC3339: 2024-01-13T12:34:56Z
+.IP \(bu 2
+Apache/Nginx logs: [13/Jan/2024:12:34:56 +0000]
+.IP \(bu 2
+Syslog format: Jan 13 12:34:56
+.IP \(bu 2
+Date only: 2024-01-13
+.SH API KEYS
+.SS MaxMind GeoIP
+Free account at https://www.maxmind.com/en/geolite2/signup
+.br
+Provides country, city, and ASN data.
+.SS AbuseIPDB
+Free tier (1000 requests/day) at https://www.abuseipdb.com/api
+.br
+Provides abuse scores, reports, usage type, ISP, and Tor exit node detection.
+.SH AUTHOR
+Written by Kawaiipantsu <thugsred@protonmail.com>
+.br
+THUGSred Hacking Community - https://thugs.red
+.SH REPORTING BUGS
+Report bugs at: https://github.com/kawaiipantsu/ipdigger/issues
+.SH COPYRIGHT
+Copyright \(co 2024-2026 Kawaiipantsu
+.br
+This is free software; see the source for copying conditions.
+.SH SEE ALSO
+.BR grep (1),
+.BR awk (1),
+.BR jq (1),
+.BR geoiplookup (1),
+.BR whois (1),
+.BR host (1)
+.PP
+Full documentation at: https://github.com/kawaiipantsu/ipdigger

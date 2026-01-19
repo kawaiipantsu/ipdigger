@@ -44,6 +44,30 @@ struct IPStats {
 };
 
 /**
+ * Time range filter specification
+ */
+struct TimeRange {
+    time_t start_time;      // 0 means no lower bound
+    time_t end_time;        // 0 means no upper bound
+    bool has_start;         // Whether start_time is set
+    bool has_end;           // Whether end_time is set
+
+    TimeRange() : start_time(0), end_time(0), has_start(false), has_end(false) {}
+
+    /**
+     * Check if a timestamp falls within this range
+     * @param timestamp Unix timestamp to check
+     * @param include_no_timestamp If true, include entries with timestamp=0
+     */
+    bool contains(time_t timestamp, bool include_no_timestamp = false) const {
+        if (timestamp == 0) return include_no_timestamp;
+        if (has_start && timestamp < start_time) return false;
+        if (has_end && timestamp > end_time) return false;
+        return true;
+    }
+};
+
+/**
  * Extract IP addresses (IPv4 and IPv6) from a line of text
  * @param line The text line to parse
  * @param cache Pre-compiled regex patterns for performance
@@ -122,6 +146,17 @@ std::string extract_date(const std::string& line, time_t& timestamp, const Regex
  */
 std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress = false, bool detect_login = false,
                                  const std::string& search_string = "", const std::string& search_regex = "");
+
+/**
+ * Parse stdin for IP addresses
+ * @param cache Pre-compiled regex patterns for performance
+ * @param detect_login Detect login status from log lines
+ * @param search_string Optional literal string to search for (empty = no search)
+ * @param search_regex Optional regex pattern to search for (empty = no search)
+ * @return Vector of IPEntry objects
+ */
+std::vector<IPEntry> parse_stdin(const RegexCache& cache, bool detect_login = false,
+                                  const std::string& search_string = "", const std::string& search_regex = "");
 
 /**
  * Parse a file with parallel processing (for large files)
@@ -210,6 +245,29 @@ std::string get_version();
  * @return Reference to the global regex cache
  */
 const RegexCache& get_regex_cache();
+
+/**
+ * Parse relative time string (e.g., "24hours", "7days") to seconds offset
+ * @param relative_str Relative time string
+ * @return Unix timestamp (current time minus offset)
+ */
+time_t parse_relative_time(const std::string& relative_str);
+
+/**
+ * Parse time string in various formats to time_t
+ * @param time_str Time string (Unix timestamp, ISO date, or relative time)
+ * @param cache Pre-compiled regex patterns for performance
+ * @return Unix timestamp
+ */
+time_t parse_time_string(const std::string& time_str, const RegexCache& cache);
+
+/**
+ * Parse --time-range argument into TimeRange struct
+ * @param range_arg Time range argument (format: "from,to")
+ * @param cache Pre-compiled regex patterns for performance
+ * @return TimeRange struct with parsed boundaries
+ */
+TimeRange parse_time_range_arg(const std::string& range_arg, const RegexCache& cache);
 
 } // namespace ipdigger
 

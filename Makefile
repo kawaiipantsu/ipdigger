@@ -1,7 +1,7 @@
 # Makefile for C++ project with security hardening and Debian packaging
 # Project configuration
 PROJECT_NAME    := ipdigger
-VERSION         := 2.1.0
+VERSION         := 2.2.0
 PREFIX          := /usr/local
 BINDIR          := $(PREFIX)/bin
 MANDIR          := $(PREFIX)/share/man/man1
@@ -135,12 +135,19 @@ install: $(TARGET)
 	@echo "$(YELLOW)Installing $(PROJECT_NAME)...$(RESET)"
 	@install -d $(DESTDIR)$(BINDIR)
 	@install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(PROJECT_NAME)
+	@if [ -f $(PROJECT_NAME).1 ]; then \
+		echo "$(YELLOW)Installing man page...$(RESET)"; \
+		install -d $(DESTDIR)$(MANDIR); \
+		gzip -c $(PROJECT_NAME).1 > $(DESTDIR)$(MANDIR)/$(PROJECT_NAME).1.gz; \
+		echo "$(GREEN)✓ Installed man page to $(DESTDIR)$(MANDIR)/$(PROJECT_NAME).1.gz$(RESET)"; \
+	fi
 	@echo "$(GREEN)✓ Installed to $(DESTDIR)$(BINDIR)/$(PROJECT_NAME)$(RESET)"
 
 # Uninstall target
 uninstall:
 	@echo "$(YELLOW)Uninstalling $(PROJECT_NAME)...$(RESET)"
 	@rm -f $(DESTDIR)$(BINDIR)/$(PROJECT_NAME)
+	@rm -f $(DESTDIR)$(MANDIR)/$(PROJECT_NAME).1.gz
 	@echo "$(GREEN)✓ Uninstalled$(RESET)"
 
 # Create Debian package
@@ -148,16 +155,24 @@ deb: all
 	@echo "$(YELLOW)Creating Debian package...$(RESET)"
 	@rm -rf $(DEBDIR)
 	@mkdir -p $(INSTALL_ROOT)$(BINDIR)
+	@mkdir -p $(INSTALL_ROOT)$(MANDIR)
 	@mkdir -p $(INSTALL_ROOT)/DEBIAN
 	@install -m 755 $(TARGET) $(INSTALL_ROOT)$(BINDIR)/$(PROJECT_NAME)
+	@if [ -f $(PROJECT_NAME).1 ]; then \
+		gzip -c $(PROJECT_NAME).1 > $(INSTALL_ROOT)$(MANDIR)/$(PROJECT_NAME).1.gz; \
+	fi
 	@echo "Package: $(PROJECT_NAME)" > $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Version: $(VERSION)" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Section: utils" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Priority: optional" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Architecture: amd64" >> $(INSTALL_ROOT)/DEBIAN/control
-	@echo "Maintainer: Developer <dev@example.com>" >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo "Maintainer: Kawaiipantsu <thugsred@protonmail.com>" >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo "Homepage: https://github.com/kawaiipantsu/ipdigger" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Description: $(PROJECT_NAME) - IP address analysis tool" >> $(INSTALL_ROOT)/DEBIAN/control
-	@echo " A secure C++ tool for IP address analysis and geolocation." >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo " A secure C++ tool for extracting and enriching IP addresses from log files." >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo " Supports GeoIP, reverse DNS, WHOIS, AbuseIPDB, TLS/SSL inspection," >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo " HTTP detection, login tracking, time-range filtering, and multi-threaded" >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo " parsing for high-performance analysis of large log files." >> $(INSTALL_ROOT)/DEBIAN/control
 	@dpkg-deb --build $(INSTALL_ROOT) $(DEB_PACKAGE)
 	@echo "$(GREEN)✓ Created $(DEB_PACKAGE)$(RESET)"
 

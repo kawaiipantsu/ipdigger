@@ -152,6 +152,176 @@ void test_version() {
     std::cout << "  ✓ Version: " << version << "\n";
 }
 
+void test_parse_relative_time() {
+    std::cout << "Testing relative time parsing...\n";
+
+    time_t now = std::time(nullptr);
+
+    // Test hours
+    time_t result = ipdigger::parse_relative_time("24hours");
+    assert(std::abs(result - (now - 86400)) < 2);
+
+    result = ipdigger::parse_relative_time("1hour");
+    assert(std::abs(result - (now - 3600)) < 2);
+
+    // Test days
+    result = ipdigger::parse_relative_time("7days");
+    assert(std::abs(result - (now - 604800)) < 2);
+
+    result = ipdigger::parse_relative_time("1day");
+    assert(std::abs(result - (now - 86400)) < 2);
+
+    // Test weeks
+    result = ipdigger::parse_relative_time("1week");
+    assert(std::abs(result - (now - 604800)) < 2);
+
+    result = ipdigger::parse_relative_time("2weeks");
+    assert(std::abs(result - (now - 1209600)) < 2);
+
+    // Test short forms
+    result = ipdigger::parse_relative_time("1h");
+    assert(std::abs(result - (now - 3600)) < 2);
+
+    result = ipdigger::parse_relative_time("30m");
+    assert(std::abs(result - (now - 1800)) < 2);
+
+    result = ipdigger::parse_relative_time("7d");
+    assert(std::abs(result - (now - 604800)) < 2);
+
+    std::cout << "  ✓ All relative time parsing tests passed\n";
+}
+
+void test_parse_time_string() {
+    std::cout << "Testing time string parsing...\n";
+
+    const auto& cache = ipdigger::get_regex_cache();
+
+    // Unix timestamp
+    time_t result = ipdigger::parse_time_string("1705136400", cache);
+    assert(result == 1705136400);
+
+    // ISO format with T separator
+    result = ipdigger::parse_time_string("2024-01-13T12:34:56Z", cache);
+    assert(result > 0);
+
+    // Common format (space separator)
+    result = ipdigger::parse_time_string("2024-01-13 12:34:56", cache);
+    assert(result > 0);
+
+    // Date only
+    result = ipdigger::parse_time_string("2024-01-13", cache);
+    assert(result > 0);
+
+    // Relative time
+    time_t now = std::time(nullptr);
+    result = ipdigger::parse_time_string("1hour", cache);
+    assert(std::abs(result - (now - 3600)) < 2);
+
+    // Empty string (should return 0)
+    result = ipdigger::parse_time_string("", cache);
+    assert(result == 0);
+
+    result = ipdigger::parse_time_string("   ", cache);
+    assert(result == 0);
+
+    std::cout << "  ✓ All time string parsing tests passed\n";
+}
+
+void test_time_range_parsing() {
+    std::cout << "Testing time range parsing...\n";
+
+    const auto& cache = ipdigger::get_regex_cache();
+
+    // Both bounds with Unix timestamps
+    ipdigger::TimeRange range = ipdigger::parse_time_range_arg("1705136400,1705222800", cache);
+    assert(range.has_start && range.has_end);
+    assert(range.start_time == 1705136400);
+    assert(range.end_time == 1705222800);
+
+    // Open start (last 24 hours)
+    range = ipdigger::parse_time_range_arg(",24hours", cache);
+    assert(!range.has_start && range.has_end);
+    time_t now = std::time(nullptr);
+    assert(std::abs(range.end_time - (now - 86400)) < 2);
+
+    // Open end (since date)
+    range = ipdigger::parse_time_range_arg("2024-01-13 00:00:00,", cache);
+    assert(range.has_start && !range.has_end);
+    assert(range.start_time > 0);
+
+    // Both sides empty (no filtering)
+    range = ipdigger::parse_time_range_arg(",", cache);
+    assert(!range.has_start && !range.has_end);
+
+    // Both sides with dates
+    range = ipdigger::parse_time_range_arg("2024-01-13,2024-01-14", cache);
+    assert(range.has_start && range.has_end);
+    assert(range.end_time > range.start_time);
+
+    // Relative times on both sides
+    range = ipdigger::parse_time_range_arg("7days,1day", cache);
+    assert(range.has_start && range.has_end);
+    assert(range.end_time > range.start_time);
+
+    std::cout << "  ✓ All time range parsing tests passed\n";
+}
+
+void test_time_range_contains() {
+    std::cout << "Testing time range contains logic...\n";
+
+    ipdigger::TimeRange range;
+    range.start_time = 1000;
+    range.end_time = 2000;
+    range.has_start = true;
+    range.has_end = true;
+
+    // Test within range
+    assert(range.contains(1500, false));
+
+    // Test at boundaries
+    assert(range.contains(1000, false));
+    assert(range.contains(2000, false));
+
+    // Test before range
+    assert(!range.contains(500, false));
+
+    // Test after range
+    assert(!range.contains(2500, false));
+
+    // Test no timestamp without include flag
+    assert(!range.contains(0, false));
+
+    // Test no timestamp with include flag
+    assert(range.contains(0, true));
+
+    // Test open start
+    ipdigger::TimeRange open_start;
+    open_start.end_time = 2000;
+    open_start.has_end = true;
+    open_start.has_start = false;
+    assert(open_start.contains(500, false));
+    assert(open_start.contains(1999, false));
+    assert(!open_start.contains(2001, false));
+
+    // Test open end
+    ipdigger::TimeRange open_end;
+    open_end.start_time = 1000;
+    open_end.has_start = true;
+    open_end.has_end = false;
+    assert(!open_end.contains(500, false));
+    assert(open_end.contains(1001, false));
+    assert(open_end.contains(10000, false));
+
+    // Test no bounds (should accept everything except 0 without flag)
+    ipdigger::TimeRange no_bounds;
+    assert(no_bounds.contains(500, false));
+    assert(no_bounds.contains(5000000, false));
+    assert(!no_bounds.contains(0, false));
+    assert(no_bounds.contains(0, true));
+
+    std::cout << "  ✓ All time range contains tests passed\n";
+}
+
 int main() {
     std::cout << "Running IPDigger tests...\n\n";
 
@@ -161,6 +331,10 @@ int main() {
         test_extract_date();
         test_parse_file();
         test_generate_statistics();
+        test_parse_relative_time();
+        test_parse_time_string();
+        test_time_range_parsing();
+        test_time_range_contains();
         test_version();
 
         std::cout << "\n✓ All tests passed successfully!\n";

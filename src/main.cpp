@@ -4,6 +4,7 @@
 #include <set>
 #include <algorithm>
 #include <thread>
+#include <unistd.h>
 #include "ipdigger.h"
 #include "config.h"
 #include "enrichment.h"
@@ -21,7 +22,9 @@ void print_usage(const char* program_name) {
     std::cout << "    THUGSred Hacking Community\n";
     std::cout << "       https://thugs.red\n";
     std::cout << "\n";
-    std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n\n";
+    std::cout << "Usage: " << program_name << " [OPTIONS] <filename>\n";
+    std::cout << "   or: " << program_name << " [OPTIONS] -\n";
+    std::cout << "   or: <command> | " << program_name << " [OPTIONS]\n\n";
     std::cout << "Options:\n";
     std::cout << "  --output-json      Output in JSON format\n";
     std::cout << "  --output-geomap    Output as GeoJSON map (requires --enrich-geo)\n";
@@ -44,6 +47,17 @@ void print_usage(const char* program_name) {
     std::cout << "  --geo-filter-none-gdpr Filter to show only IPs outside GDPR regions (auto-enables --enrich-geo)\n";
     std::cout << "  --top-limit <N>    Show only top N IPs sorted by count\n";
     std::cout << "  --limit <N>        Show only latest N entries\n";
+    std::cout << "  --time-range <from,to>  Filter entries by timestamp (comma-separated)\n";
+    std::cout << "                          Formats: Unix timestamp, ISO date, relative time\n";
+    std::cout << "                          Omit 'from' for open start: \",24hours\"\n";
+    std::cout << "                          Omit 'to' for open end: \"2024-01-13,\"\n";
+    std::cout << "                          Relative: 24hours, 7days, 1week, 30minutes\n";
+    std::cout << "                          Examples:\n";
+    std::cout << "                            --time-range \"1705136400,1705222800\"\n";
+    std::cout << "                            --time-range \"2024-01-13 00:00:00,2024-01-14 00:00:00\"\n";
+    std::cout << "                            --time-range \",24hours\"\n";
+    std::cout << "                            --time-range \"7days,1day\"\n";
+    std::cout << "  --include-no-timestamp  Include entries without timestamps in time-range filter\n";
     std::cout << "  --single-threaded  Force single-threaded parsing (disables parallelism)\n";
     std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
@@ -68,6 +82,11 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " --geo-filter-none-gdpr /var/log/auth.log\n";
     std::cout << "  " << program_name << " --top-limit 20 --output-json \"/var/log/*.log\"\n";
     std::cout << "  " << program_name << " --limit 100 /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --time-range \",24hours\" /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --time-range \"2024-01-13,2024-01-14\" --enrich-geo /var/log/auth.log\n";
+    std::cout << "  echo \"192.168.1.1\" | " << program_name << "        # From stdin\n";
+    std::cout << "  cat ip_list.txt | " << program_name << " --enrich-geo  # Pipe list\n";
+    std::cout << "  grep \"Failed\" /var/log/auth.log | " << program_name << " --detect-login\n";
     std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n\n";
     std::cout << "Configuration:\n";
     std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
@@ -100,6 +119,9 @@ int main(int argc, char* argv[]) {
         config = ipdigger::Config();  // Use defaults
     }
 
+    // Get pre-compiled regex cache (needed for time-range parsing)
+    const auto& cache = ipdigger::get_regex_cache();
+
     // Parse command line arguments (CLI overrides config)
     bool output_json = config.default_json;
     bool output_geomap = false;
@@ -125,6 +147,8 @@ int main(int argc, char* argv[]) {
     std::string search_string;
     std::string search_regex;
     std::string filename;
+    ipdigger::TimeRange time_range;  // Default: no filtering
+    bool include_no_timestamp = false;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -220,6 +244,29 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --threads requires a valid number\n";
                 return 1;
             }
+        } else if (arg == "--time-range") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --time-range requires argument (format: from,to)\n";
+                std::cerr << "Examples: --time-range \"2024-01-13,2024-01-14\"\n";
+                std::cerr << "          --time-range \",24hours\"\n";
+                return 1;
+            }
+            try {
+                time_range = ipdigger::parse_time_range_arg(argv[++i], cache);
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Invalid --time-range: " << e.what() << "\n";
+                return 1;
+            }
+        } else if (arg == "--include-no-timestamp") {
+            include_no_timestamp = true;
+        } else if (arg == "-") {
+            // "-" means stdin
+            if (!filename.empty()) {
+                std::cerr << "Error: Multiple filenames specified\n";
+                std::cerr << "Use --help for usage information\n";
+                return 1;
+            }
+            filename = arg;
         } else if (arg[0] == '-') {
             std::cerr << "Error: Unknown option '" << arg << "'\n";
             std::cerr << "Use --help for usage information\n";
@@ -234,11 +281,21 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Validate input
+    // Validate input - check for stdin or filename
+    bool use_stdin = false;
     if (filename.empty()) {
-        std::cerr << "Error: No filename specified\n";
-        print_usage(argv[0]);
-        return 1;
+        // Check if stdin is available (not a TTY)
+        if (!isatty(STDIN_FILENO)) {
+            use_stdin = true;
+            filename = "-";  // Special marker for stdin
+        } else {
+            std::cerr << "Error: No filename specified and no data piped to stdin\n";
+            std::cerr << "Either provide a filename or pipe data to stdin\n";
+            print_usage(argv[0]);
+            return 1;
+        }
+    } else if (filename == "-") {
+        use_stdin = true;
     }
 
     // Auto-enable geo enrichment if geo filtering or geomap output is requested
@@ -259,37 +316,42 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        // Get pre-compiled regex cache for performance
-        const auto& cache = ipdigger::get_regex_cache();
-
-        // Expand glob pattern to get list of files
-        auto files = ipdigger::expand_glob(filename);
-
-        if (files.empty()) {
-            std::cerr << "Error: No files matched pattern: " << filename << "\n";
-            return 1;
-        }
-
-        // Parse all files (show progress if not in JSON mode)
-        bool show_progress = !output_json;
         std::vector<ipdigger::IPEntry> entries;
+        std::vector<std::string> files;
 
-        if (files.size() == 1) {
-            // Single file - use parallel parsing for large files
-            if (actual_threads > 1) {
-                entries = ipdigger::parse_file_parallel(
-                    files[0], cache, show_progress, detect_login,
-                    search_string, search_regex, actual_threads, config.chunk_size_mb
-                );
-            } else {
-                // Single-threaded
-                entries = ipdigger::parse_file(files[0], cache, show_progress, detect_login,
-                                              search_string, search_regex);
-            }
+        if (use_stdin) {
+            // Parse from stdin
+            entries = ipdigger::parse_stdin(cache, detect_login, search_string, search_regex);
+            files.push_back("(stdin)");
         } else {
-            // Multiple files - use multi-file parallel parser
-            entries = ipdigger::parse_files(files, cache, show_progress, detect_login,
-                                           search_string, search_regex);
+            // Expand glob pattern to get list of files
+            files = ipdigger::expand_glob(filename);
+
+            if (files.empty()) {
+                std::cerr << "Error: No files matched pattern: " << filename << "\n";
+                return 1;
+            }
+
+            // Parse all files (show progress if not in JSON mode)
+            bool show_progress = !output_json;
+
+            if (files.size() == 1) {
+                // Single file - use parallel parsing for large files
+                if (actual_threads > 1) {
+                    entries = ipdigger::parse_file_parallel(
+                        files[0], cache, show_progress, detect_login,
+                        search_string, search_regex, actual_threads, config.chunk_size_mb
+                    );
+                } else {
+                    // Single-threaded
+                    entries = ipdigger::parse_file(files[0], cache, show_progress, detect_login,
+                                                  search_string, search_regex);
+                }
+            } else {
+                // Multiple files - use multi-file parallel parser
+                entries = ipdigger::parse_files(files, cache, show_progress, detect_login,
+                                               search_string, search_regex);
+            }
         }
 
         // Filter out private IPs if requested
@@ -377,6 +439,37 @@ int main(int argc, char* argv[]) {
                 entries.end() - limit,
                 entries.end()
             );
+        }
+
+        // Apply time-range filtering if requested
+        if (time_range.has_start || time_range.has_end) {
+            std::vector<ipdigger::IPEntry> filtered_entries;
+            size_t excluded_count = 0;
+            size_t no_timestamp_count = 0;
+
+            for (const auto& entry : entries) {
+                if (entry.timestamp == 0) {
+                    no_timestamp_count++;
+                }
+
+                if (time_range.contains(entry.timestamp, include_no_timestamp)) {
+                    filtered_entries.push_back(entry);
+                } else {
+                    excluded_count++;
+                }
+            }
+
+            // Show filtering info (only in non-JSON mode)
+            if (!output_json && excluded_count > 0) {
+                std::cerr << "Filtered out " << excluded_count
+                          << " entries outside time range";
+                if (no_timestamp_count > 0 && !include_no_timestamp) {
+                    std::cerr << " (" << no_timestamp_count << " had no timestamp)";
+                }
+                std::cerr << "\n";
+            }
+
+            entries = filtered_entries;
         }
 
         if (entries.empty()) {

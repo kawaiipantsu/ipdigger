@@ -5,7 +5,7 @@
     |     +      )._______.-'
      `----------'
 
-       IP Digger v2.1.0
+       IP Digger v2.2.0
   Your swiss armyknife tool for IP addresses
 
          by kawaiipantsu
@@ -20,6 +20,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 🔍 **IP Extraction**: IPv4 and IPv6 from any log format
 - 📊 **Statistics**: Count, first/last seen per IP
 - 🔎 **Search**: Filter logs by literal strings or regex patterns with hit counts per IP
+- ⏰ **Time-Range Filtering**: Filter entries by timestamp (Unix, ISO 8601, relative times like "24hours")
 - 🌍 **GeoIP**: MaxMind country/city/ASN data with latitude/longitude
 - 🗺️ **Map Visualization**: Export GeoJSON for mapping tools (Leaflet, Mapbox, QGIS)
 - 🔐 **Login Detection**: Track authentication success/failures
@@ -38,8 +39,8 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.1.0/ipdigger_2.1.0_amd64.deb
-sudo dpkg -i ipdigger_2.1.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.2.0/ipdigger_2.2.0_amd64.deb
+sudo dpkg -i ipdigger_2.2.0_amd64.deb
 ```
 
 ### From Source
@@ -65,6 +66,11 @@ ipdigger /var/log/nginx/access.log
 
 # Multiple files
 ipdigger "/var/log/*.log"
+
+# Read from stdin (pipe support)
+echo "192.168.1.1" | ipdigger
+cat ip_list.txt | ipdigger
+grep "Failed" /var/log/auth.log | ipdigger --detect-login
 
 # With enrichment
 ipdigger --enrich-geo --enrich-whois /var/log/auth.log
@@ -139,6 +145,8 @@ The progress bar displays:
 
 ```
 Usage: ipdigger [OPTIONS] <filename>
+   or: ipdigger [OPTIONS] -
+   or: <command> | ipdigger [OPTIONS]
 
 Output Formats:
   --output-json      Output in JSON format
@@ -189,6 +197,33 @@ ipdigger /var/log/nginx/access.log
 |----------------|---------------------|---------------------|-------|
 | 192.168.1.100  | 2024-01-13 08:15:23 | 2024-01-13 08:25:30 |     4 |
 | 203.0.113.45   | 2024-01-13 08:17:12 | 2024-01-13 08:17:12 |     1 |
+```
+
+### Stdin/Pipe Support
+
+IPDigger can read from stdin, making it perfect for Unix pipelines:
+
+```bash
+# Pipe a single IP
+echo "192.168.1.1" | ipdigger
+
+# Pipe a list of IPs
+cat ip_list.txt | ipdigger --enrich-geo
+
+# Filter logs first, then analyze
+grep "Failed password" /var/log/auth.log | ipdigger --detect-login
+
+# Chain with other commands
+tail -1000 /var/log/nginx/access.log | ipdigger --no-private --top-limit 10
+
+# From curl output
+curl -s https://example.com/ip-list.txt | ipdigger --enrich-abuseipdb
+
+# Using explicit stdin marker
+cat /var/log/auth.log | ipdigger - --output-json
+
+# Complex pipeline
+awk '/Failed/ {print}' /var/log/auth.log | ipdigger --detect-login --enrich-geo --top-limit 5
 ```
 
 ### Login Detection
@@ -410,6 +445,50 @@ The search feature:
 - **SearchHits column** - Shows count of lines matching the search criteria per IP
 - **Count vs SearchHits** - Count shows total lines per IP, SearchHits shows matching lines
 - **Filtering behavior** - All IPs are shown, but SearchHits highlights matching activity
+
+### Time-Based Filtering
+
+Filter log entries by timestamp to focus on specific time windows:
+
+```bash
+# Last 24 hours only
+ipdigger --time-range ",24hours" /var/log/auth.log
+
+# Specific date range
+ipdigger --time-range "2024-01-13 00:00:00,2024-01-14 00:00:00" /var/log/auth.log
+
+# Since deployment (open-ended)
+ipdigger --time-range "2024-01-13 10:00:00," /var/log/app.log
+
+# Last week's activity
+ipdigger --time-range "7days,1day" /var/log/nginx/access.log
+
+# Unix timestamp range
+ipdigger --time-range "1705136400,1705222800" /var/log/auth.log
+
+# Include entries without timestamps
+ipdigger --time-range ",24hours" --include-no-timestamp /var/log/auth.log
+```
+
+**Supported time formats:**
+- **Unix timestamp**: `1705136400`
+- **ISO 8601/UTC**: `2024-01-13T12:34:56Z`
+- **Common format**: `2024-01-13 12:34:56`
+- **Date only**: `2024-01-13` (implies 00:00:00)
+- **Relative times**: `30minutes`, `24hours`, `7days`, `1week`, `2months`, `1year`
+  - Supported units: seconds, minutes, hours, days, weeks, months, years
+  - Short forms: `s`, `m`, `h`, `d`, `w`, `mo`, `yr`
+
+**Time range syntax:**
+- `from,to` - Show entries between two times
+- `,to` - Show entries up to time (from beginning)
+- `from,` - Show entries from time onward (to end)
+
+**Behavior:**
+- Entries without timestamps are excluded by default
+- Use `--include-no-timestamp` to include entries that have no date
+- Relative times calculated from current time (now)
+- Can be combined with other filters: `--no-private`, `--top-limit`, `--geo-filter-*`
 
 ### JSON Output
 ```bash
@@ -695,6 +774,28 @@ ipdigger --geo-filter-none-gdpr --detect-login --no-private /var/log/auth.log
 
 # Export JSON for custom analysis
 ipdigger --enrich-geo --output-json /var/log/nginx/access.log > traffic.json
+```
+
+**Time-Based Analysis:**
+```bash
+# Security incident investigation (specific window)
+ipdigger --time-range "2024-01-13 14:30:00,2024-01-13 15:45:00" \
+         --detect-login --enrich-abuseipdb /var/log/auth.log
+
+# Last 24 hours with geo analysis
+ipdigger --time-range ",24hours" --enrich-geo --top-limit 20 /var/log/auth.log
+
+# Historical analysis (last week)
+ipdigger --time-range "7days,1day" --enrich-geo --output-geomap /var/log/nginx/*.log > weekly.geojson
+
+# Since specific event
+ipdigger --time-range "2024-01-13 10:00:00," --detect-login /var/log/auth.log
+
+# Recent failed logins (last hour)
+ipdigger --time-range ",1hour" --detect-login --search "Failed" /var/log/auth.log
+
+# Working hours analysis (9 AM to 5 PM on specific day)
+ipdigger --time-range "2024-01-13 09:00:00,2024-01-13 17:00:00" /var/log/app.log
 ```
 
 **Comprehensive Investigation:**

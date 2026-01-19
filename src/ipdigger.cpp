@@ -20,7 +20,7 @@
 namespace ipdigger {
 
 std::string get_version() {
-    return "2.1.0";
+    return "2.2.0";
 }
 
 // RegexCache implementation
@@ -367,6 +367,151 @@ std::string extract_date(const std::string& line, time_t& timestamp, const Regex
     return "";
 }
 
+// Parse relative time string (e.g., "24hours", "7days") to seconds offset
+time_t parse_relative_time(const std::string& relative_str) {
+    // Pattern: number followed by time unit
+    std::regex pattern(R"(^(\d+)(seconds?|minutes?|hours?|days?|weeks?|months?|years?|sec|min|hr|s|m|h|d|w|mo|yr|y)$)",
+                       std::regex::icase);
+    std::smatch match;
+
+    if (!std::regex_match(relative_str, match, pattern)) {
+        throw std::runtime_error("Invalid relative time format: " + relative_str);
+    }
+
+    long long number = std::stoll(match[1].str());
+    std::string unit = match[2].str();
+
+    // Convert to lowercase for comparison
+    std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+
+    // Calculate seconds offset based on unit
+    long long seconds_offset = 0;
+    if (unit == "second" || unit == "seconds" || unit == "sec" || unit == "s") {
+        seconds_offset = number;
+    } else if (unit == "minute" || unit == "minutes" || unit == "min" || unit == "m") {
+        seconds_offset = number * 60;
+    } else if (unit == "hour" || unit == "hours" || unit == "hr" || unit == "h") {
+        seconds_offset = number * 3600;
+    } else if (unit == "day" || unit == "days" || unit == "d") {
+        seconds_offset = number * 86400;
+    } else if (unit == "week" || unit == "weeks" || unit == "w") {
+        seconds_offset = number * 604800;
+    } else if (unit == "month" || unit == "months" || unit == "mo") {
+        seconds_offset = number * 2592000;  // 30 days
+    } else if (unit == "year" || unit == "years" || unit == "yr" || unit == "y") {
+        seconds_offset = number * 31536000;  // 365 days
+    } else {
+        throw std::runtime_error("Unknown time unit: " + unit);
+    }
+
+    // Return current time minus offset
+    time_t now = std::time(nullptr);
+    return now - seconds_offset;
+}
+
+// Parse time string in various formats to time_t
+time_t parse_time_string(const std::string& time_str, const RegexCache& cache) {
+    // Trim whitespace
+    std::string trimmed = time_str;
+    trimmed.erase(0, trimmed.find_first_not_of(" \t\n\r"));
+    trimmed.erase(trimmed.find_last_not_of(" \t\n\r") + 1);
+
+    // Empty string means no bound
+    if (trimmed.empty()) {
+        return 0;
+    }
+
+    // Check if it's a Unix timestamp (all digits)
+    std::regex unix_timestamp_pattern(R"(^\d+$)");
+    if (std::regex_match(trimmed, unix_timestamp_pattern)) {
+        try {
+            return std::stoll(trimmed);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("Invalid Unix timestamp: " + trimmed);
+        }
+    }
+
+    // Check if it's a relative time
+    std::regex relative_pattern(R"(^\d+(seconds?|minutes?|hours?|days?|weeks?|months?|years?|sec|min|hr|s|m|h|d|w|mo|yr|y)$)",
+                                std::regex::icase);
+    if (std::regex_match(trimmed, relative_pattern)) {
+        return parse_relative_time(trimmed);
+    }
+
+    // Try each date pattern from the cache
+    for (const auto& pattern_pair : cache.date_patterns) {
+        try {
+            std::smatch match;
+            if (std::regex_search(trimmed, match, pattern_pair.first)) {
+                std::string date_str = match[0].str();
+
+                // Parse the date string using the corresponding format
+                std::tm tm = {};
+                std::istringstream ss(date_str);
+                ss >> std::get_time(&tm, pattern_pair.second.c_str());
+
+                if (!ss.fail()) {
+                    time_t timestamp = std::mktime(&tm);
+                    if (timestamp != -1) {
+                        return timestamp;
+                    }
+                }
+            }
+        } catch (const std::regex_error&) {
+            // Skip invalid regex patterns
+            continue;
+        }
+    }
+
+    throw std::runtime_error("Invalid time format: " + trimmed);
+}
+
+// Parse --time-range argument into TimeRange struct
+TimeRange parse_time_range_arg(const std::string& range_arg, const RegexCache& cache) {
+    TimeRange range;
+
+    // Find the comma separator
+    size_t comma_pos = range_arg.find(',');
+    if (comma_pos == std::string::npos) {
+        throw std::runtime_error("Invalid time range format. Expected 'from,to'. Example: '2024-01-13,2024-01-14' or ',24hours'");
+    }
+
+    // Split into from and to parts
+    std::string from_str = range_arg.substr(0, comma_pos);
+    std::string to_str = range_arg.substr(comma_pos + 1);
+
+    // Parse 'from' time
+    try {
+        if (!from_str.empty() && from_str.find_first_not_of(" \t\n\r") != std::string::npos) {
+            range.start_time = parse_time_string(from_str, cache);
+            range.has_start = true;
+        }
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Invalid 'from' time: " + std::string(e.what()));
+    }
+
+    // Parse 'to' time
+    try {
+        if (!to_str.empty() && to_str.find_first_not_of(" \t\n\r") != std::string::npos) {
+            range.end_time = parse_time_string(to_str, cache);
+            range.has_end = true;
+        }
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Invalid 'to' time: " + std::string(e.what()));
+    }
+
+    // Validate that end is after start
+    if (range.has_start && range.has_end && range.end_time < range.start_time) {
+        char buffer[256];
+        std::snprintf(buffer, sizeof(buffer),
+                     "Invalid time range: end time is before start time\nStart: %lld\nEnd:   %lld\nDid you mean to swap them?",
+                     (long long)range.start_time, (long long)range.end_time);
+        throw std::runtime_error(buffer);
+    }
+
+    return range;
+}
+
 // Chunk information for parallel parsing
 struct ChunkInfo {
     size_t start_offset;      // Byte offset where chunk starts
@@ -635,6 +780,79 @@ std::vector<IPEntry> parse_file_parallel(
     progress.finish();
 
     return all_entries;
+}
+
+// Parse stdin for IP addresses
+std::vector<IPEntry> parse_stdin(const RegexCache& cache, bool detect_login,
+                                  const std::string& search_string, const std::string& search_regex) {
+    std::vector<IPEntry> entries;
+
+    // Compile regex pattern if search_regex is provided
+    std::regex regex_pattern;
+    bool use_regex = !search_regex.empty();
+    if (use_regex) {
+        try {
+            regex_pattern = std::regex(search_regex, std::regex::icase);
+        } catch (const std::regex_error& e) {
+            throw std::runtime_error("Invalid regex pattern: " + std::string(e.what()));
+        }
+    }
+    bool use_search = !search_string.empty();
+
+    std::string line;
+    size_t line_number = 0;
+
+    while (std::getline(std::cin, line)) {
+        line_number++;
+
+        // Extract all IP addresses from this line using pre-compiled patterns
+        auto ip_addresses = extract_ip_addresses(line, cache);
+
+        if (ip_addresses.empty()) {
+            continue;
+        }
+
+        // Extract date from this line using pre-compiled patterns
+        time_t timestamp;
+        std::string date_str = extract_date(line, timestamp, cache);
+
+        // Detect login status if requested
+        std::string login_status = "";
+        if (detect_login) {
+            login_status = detect_login_status(line);
+        }
+
+        // Check if line matches search criteria
+        bool line_matches = false;
+        if (use_regex) {
+            line_matches = std::regex_search(line, regex_pattern);
+        } else if (use_search) {
+            // Case-insensitive literal search
+            std::string lower_line = line;
+            std::string lower_search = search_string;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+            std::transform(lower_search.begin(), lower_search.end(), lower_search.begin(), ::tolower);
+            line_matches = (lower_line.find(lower_search) != std::string::npos);
+        } else {
+            // No search criteria, all lines match
+            line_matches = true;
+        }
+
+        // Create an entry for each IP address found on this line
+        for (const auto& ip : ip_addresses) {
+            IPEntry entry;
+            entry.ip_address = ip;
+            entry.date_string = date_str;
+            entry.filename = "(stdin)";
+            entry.login_status = login_status;
+            entry.line_number = line_number;
+            entry.timestamp = timestamp;
+            entry.matches_search = line_matches;
+            entries.push_back(entry);
+        }
+    }
+
+    return entries;
 }
 
 std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,

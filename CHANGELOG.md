@@ -5,6 +5,57 @@ All notable changes to IPDigger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-01-19
+
+### Added
+- **Time-Range Filtering** (`--time-range <from,to>`): Filter log entries by timestamp
+  - Supports multiple time formats:
+    - Unix timestamps: `1705136400`
+    - ISO 8601/UTC: `2024-01-13T12:34:56Z`
+    - Common format: `2024-01-13 12:34:56`
+    - Date only: `2024-01-13` (implies 00:00:00)
+    - Relative times: `30minutes`, `24hours`, `7days`, `1week`, `2months`, `1year`
+    - Short forms: `s`, `m`, `h`, `d`, `w`, `mo`, `yr`
+  - Flexible range syntax:
+    - `from,to` - Show entries between two times
+    - `,to` - Show entries up to time (from beginning)
+    - `from,` - Show entries from time onward (to end)
+  - `--include-no-timestamp` flag to include entries without timestamps (excluded by default)
+  - Combines seamlessly with all existing filters: `--no-private`, `--top-limit`, `--geo-filter-*`
+  - Works with both table and JSON output formats
+  - Clear filtering feedback showing excluded entry count
+
+### Changed
+- **CLI Interface**: Added `--time-range` and `--include-no-timestamp` flags
+- **Help Text**: Comprehensive examples for time-range filtering syntax
+
+### Improved
+- **Incident Response**: Focus analysis on specific time windows during security investigations
+- **Performance Analysis**: Filter logs to business hours or specific timeframes
+- **Historical Analysis**: Use relative times like "7days" to analyze recent activity
+- **Flexibility**: Relative times calculated from current time for dynamic filtering
+
+### Examples
+```bash
+# Last 24 hours only
+ipdigger --time-range ",24hours" /var/log/auth.log
+
+# Specific incident window
+ipdigger --time-range "2024-01-13 14:30:00,2024-01-13 15:45:00" --detect-login /var/log/auth.log
+
+# Historical analysis (last week)
+ipdigger --time-range "7days,1day" --enrich-geo --output-geomap /var/log/nginx/*.log
+
+# Since deployment
+ipdigger --time-range "2024-01-13 10:00:00," --detect-login /var/log/auth.log
+
+# Unix timestamp range
+ipdigger --time-range "1705136400,1705222800" /var/log/auth.log
+
+# Include entries without timestamps
+ipdigger --time-range ",24hours" --include-no-timestamp /var/log/auth.log
+```
+
 ## [2.1.0] - 2026-01-19
 
 ### Added
