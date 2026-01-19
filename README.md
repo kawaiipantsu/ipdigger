@@ -19,6 +19,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 - 🔍 **IP Extraction**: IPv4 and IPv6 from any log format
 - 📊 **Statistics**: Count, first/last seen per IP
+- 🔗 **IP Correlation**: Map IPs to users, hostnames, or custom patterns from CSV logs (auto-detects format)
 - 🔎 **Search**: Filter logs by literal strings or regex patterns with hit counts per IP
 - ⏰ **Time-Range Filtering**: Filter entries by timestamp (Unix, ISO 8601, relative times like "24hours")
 - 📊 **Group-By Analysis**: Group IPs by ASN, country, or organization for network-level insights
@@ -117,6 +118,86 @@ ipdigger --time-range "24hours," /var/log/auth.log
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \
          --detect-login --top-limit 10 --output-json /var/log/auth.log
+```
+
+## IP Correlation
+
+IP Correlation maps IP addresses to other fields (users, hostnames, or custom patterns) from structured log data. Perfect for security analysis and user tracking.
+
+### Correlation Types
+
+**User Correlation** - Track which users accessed from which IPs:
+```bash
+# Map IPs to usernames/emails from CSV logs
+ipdigger --correlate-user username auth.csv
+ipdigger --correlate-user email --output-json login_log.csv
+```
+
+**Host Correlation** - Map IPs to hostnames or domains:
+```bash
+# Map IPs to hostnames
+ipdigger --correlate-host hostname server_log.csv
+
+# Extract root domain from FQDNs (mail.example.com -> example.com)
+ipdigger --correlate-host fqdn --extract-domain dns.csv
+```
+
+**Custom Regex** - Extract custom patterns:
+```bash
+# Correlate by HTTP method
+ipdigger --correlate-custom 'method="(GET|POST)"' web.log
+
+# Correlate by status code
+ipdigger --correlate-custom 'status=(\d+)' nginx.log
+
+# Correlate by action
+ipdigger --correlate-custom 'action=(\w+)' app.log
+```
+
+### Features
+- **Auto-detection**: CSV format with comma, semicolon, pipe, or tab delimiters
+- **Header detection**: Automatically detects and uses header row
+- **Multiple values**: IPs with multiple correlation values shown as comma-separated
+- **Grouped output**: Results grouped by correlation value, sorted by event count
+- **JSON support**: Full correlation data in JSON output
+
+### Example Workflow
+
+Sample CSV file:
+```csv
+timestamp,ip,user,action
+2024-01-13 10:00:00,192.168.1.100,alice,login
+2024-01-13 10:15:00,192.168.1.101,bob,login
+2024-01-13 10:30:00,192.168.1.100,charlie,logout
+```
+
+Analysis:
+```bash
+ipdigger --correlate-user user login_audit.csv
+```
+
+Output:
+```
+User: alice, charlie (1 IP, 2 events)
+================================================================================
+| IP Address      | First Seen          | Last Seen           | Count |
+| 192.168.1.100   | 2024-01-13 10:00:00 | 2024-01-13 10:30:00 |     2 |
+
+User: bob (1 IP, 1 event)
+================================================================================
+| IP Address      | First Seen          | Last Seen           | Count |
+| 192.168.1.101   | 2024-01-13 10:15:00 | 2024-01-13 10:15:00 |     1 |
+```
+
+### Use Cases
+- **Security Analysis**: Find shared credentials (multiple users from same IP)
+- **User Tracking**: Track which IPs each user accessed from
+- **Network Mapping**: Map IPs to infrastructure by hostname or domain
+- **Pattern Analysis**: Group by HTTP method, status code, or custom patterns
+
+For detailed correlation documentation, run:
+```bash
+ipdigger --help-correlation
 ```
 
 ## Performance

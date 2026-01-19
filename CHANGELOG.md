@@ -5,6 +5,80 @@ All notable changes to IPDigger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-01-19
+
+### Added
+- **IP Correlation Feature**: Map IP addresses to other fields from structured log data
+  - `--correlate-user <field>`: Correlate IPs to username/email fields (CSV format)
+  - `--correlate-host <field>`: Correlate IPs to hostname/domain fields (CSV format)
+  - `--correlate-custom <regex>`: Correlate IPs using custom regex patterns (any format)
+  - `--extract-domain`: Extract root domain from FQDNs (e.g., mail.example.com → example.com)
+  - Auto-detection of CSV format (comma, semicolon, pipe, tab delimiters)
+  - Header row detection with case-insensitive field name matching
+  - Handles quoted fields with embedded delimiters
+  - Aggregates multiple correlation values per IP (comma-separated display)
+  - Grouped output by correlation value, sorted by event count
+  - Full JSON output support with correlation grouping
+  - Requires 80% delimiter consistency for format detection
+
+- **Detailed Correlation Help**: New `--help-correlation` command
+  - Comprehensive guide to correlation features
+  - Detailed examples for each correlation type
+  - CSV format detection explanation
+  - Practical use cases for security analysis and user tracking
+  - Complete workflow examples with sample data
+
+### Changed
+- **CLI Interface**: Added correlation flags (`--correlate-user`, `--correlate-host`, `--correlate-custom`, `--extract-domain`)
+- **Mutual Exclusivity**: Only one correlation flag allowed at a time
+- **Parallel Parsing**: Disabled for correlation mode (requires sequential processing)
+- **Help Text**: Added `--help-correlation` to main help menu
+- **Output Functions**: New grouped output for correlation (table and JSON)
+
+### Technical Details
+- **New Files**:
+  - `include/correlation.h` (data structures and declarations)
+  - `src/correlation.cpp` (~450 lines of implementation)
+- **Modified Files**: Updated parse functions, statistics aggregation, and output dispatch
+- **CSV Parsing**: State machine with proper quote handling
+- **Domain Extraction**: Handles special TLDs (co.uk, com.au, etc.)
+- **Field Mapping**: Dynamic field discovery from CSV header
+- **Error Handling**: Graceful fallback if CSV detection fails
+
+### Use Cases
+- **Security Analysis**: Find shared credentials (multiple users from same IP)
+- **User Tracking**: Track which IPs each user accessed from
+- **Network Mapping**: Map IPs to infrastructure by hostname or domain
+- **Pattern Analysis**: Group by HTTP method, status code, or custom patterns
+
+### Examples
+```bash
+# User correlation
+ipdigger --correlate-user username auth.csv
+ipdigger --correlate-user email --output-json login_log.csv
+
+# Host correlation with domain extraction
+ipdigger --correlate-host hostname server_log.csv
+ipdigger --correlate-host fqdn --extract-domain dns.csv
+
+# Custom regex patterns
+ipdigger --correlate-custom 'action=(\w+)' app.log
+ipdigger --correlate-custom 'status=(\d+)' nginx.log
+ipdigger --correlate-custom 'method="(GET|POST)"' web.log
+
+# Mixed formats (different delimiters)
+ipdigger --correlate-user user data.csv      # comma-separated
+ipdigger --correlate-user user data.tsv      # tab-separated
+ipdigger --correlate-user user data.txt      # auto-detect delimiter
+```
+
+### Limitations
+- CSV/delimited format required for `--correlate-user` and `--correlate-host`
+- Custom regex (`--correlate-custom`) works on any text format
+- Only one correlation type can be active at a time
+- Disables parallel parsing (uses single-threaded mode)
+- Compatible with compressed files (.gz, .bz2, .xz)
+
 ## [2.3.0] - 2026-01-19
 
 ### Added

@@ -10,8 +10,9 @@
 
 namespace ipdigger {
 
-// Forward declaration for enrichment data
+// Forward declarations
 struct EnrichmentData;
+struct CorrelationSettings;
 
 /**
  * Represents a single IP address entry with optional date
@@ -152,10 +153,12 @@ std::string extract_date(const std::string& line, time_t& timestamp, const Regex
  * @param detect_login Detect login status from log lines
  * @param search_string Optional literal string to search for (empty = no search)
  * @param search_regex Optional regex pattern to search for (empty = no search)
+ * @param correlation_settings Optional correlation settings for IP-field mapping
  * @return Vector of IPEntry objects
  */
 std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress = false, bool detect_login = false,
-                                 const std::string& search_string = "", const std::string& search_regex = "");
+                                 const std::string& search_string = "", const std::string& search_regex = "",
+                                 const CorrelationSettings* correlation_settings = nullptr);
 
 /**
  * Parse stdin for IP addresses
@@ -178,11 +181,13 @@ std::vector<IPEntry> parse_stdin(const RegexCache& cache, bool detect_login = fa
  * @param search_regex Optional regex pattern to search for (empty = no search)
  * @param num_threads Number of threads to use
  * @param min_chunk_size_mb Minimum chunk size in MB
+ * @param correlation_settings Optional correlation settings for IP-field mapping
  * @return Vector of IPEntry objects
  */
 std::vector<IPEntry> parse_file_parallel(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,
                                           const std::string& search_string, const std::string& search_regex,
-                                          size_t num_threads, size_t min_chunk_size_mb);
+                                          size_t num_threads, size_t min_chunk_size_mb,
+                                          const CorrelationSettings* correlation_settings = nullptr);
 
 /**
  * Parse multiple files and extract all IP entries
@@ -192,10 +197,12 @@ std::vector<IPEntry> parse_file_parallel(const std::string& filename, const Rege
  * @param detect_login Detect login status from log lines
  * @param search_string Optional literal string to search for (empty = no search)
  * @param search_regex Optional regex pattern to search for (empty = no search)
+ * @param correlation_settings Optional correlation settings for IP-field mapping
  * @return Vector of IPEntry objects from all files
  */
 std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, const RegexCache& cache, bool show_progress = false, bool detect_login = false,
-                                  const std::string& search_string = "", const std::string& search_regex = "");
+                                  const std::string& search_string = "", const std::string& search_regex = "",
+                                  const CorrelationSettings* correlation_settings = nullptr);
 
 /**
  * Expand glob pattern to list of files
@@ -291,6 +298,13 @@ void print_stats_json_grouped_by_org(const std::map<std::string, IPStats>& stats
  * @return Version string
  */
 std::string get_version();
+
+/**
+ * Escape string for JSON output
+ * @param str String to escape
+ * @return Escaped string
+ */
+std::string json_escape(const std::string& str);
 
 /**
  * Get global regex cache (thread-safe singleton)

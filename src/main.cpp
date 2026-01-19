@@ -9,6 +9,7 @@
 #include "config.h"
 #include "enrichment.h"
 #include "compression.h"
+#include "correlation.h"
 
 void print_banner() {
     std::cout << "\n";
@@ -75,10 +76,15 @@ void print_usage(const char* program_name) {
     std::cout << "  --group-by-asn     Group results by ASN (auto-enables --enrich-geo)\n";
     std::cout << "  --group-by-country Group results by country (auto-enables --enrich-geo)\n";
     std::cout << "  --group-by-org     Group results by organization (auto-enables --enrich-geo)\n";
+    std::cout << "  --correlate-user <field>    Correlate IPs to username/email field (CSV format)\n";
+    std::cout << "  --correlate-host <field>    Correlate IPs to hostname/domain field (CSV format)\n";
+    std::cout << "  --correlate-custom <regex>  Correlate IPs using custom regex pattern\n";
+    std::cout << "  --extract-domain   Extract domain from hostname (use with --correlate-host)\n";
     std::cout << "  --single-threaded  Force single-threaded parsing (disables parallelism)\n";
     std::cout << "  --threads <N>      Number of threads for parsing (default: auto-detect CPU cores)\n";
     std::cout << "  --help             Display this help message\n";
     std::cout << "  --help-extended    Display extended help with examples\n";
+    std::cout << "  --help-correlation Display detailed correlation feature guide\n";
     std::cout << "  --version          Display version information\n\n";
     std::cout << "For examples and more detailed information, use: " << program_name << " --help-extended\n\n";
     std::cout << "Configuration:\n";
@@ -159,6 +165,126 @@ void print_extended_help(const char* program_name) {
     std::cout << "  Cache dir:   ~/.ipdigger/cache/\n";
 }
 
+void print_correlation_help(const char* program_name) {
+    print_banner();
+    std::cout << "IP CORRELATION FEATURE - Detailed Guide\n";
+    std::cout << "========================================\n\n";
+    std::cout << "IP Correlation maps IP addresses to other fields (usernames, hostnames, or custom patterns)\n";
+    std::cout << "from structured log data. Output is grouped by correlation value, making it easy to see\n";
+    std::cout << "which users, systems, or patterns are associated with which IP addresses.\n\n";
+
+    std::cout << "CORRELATION TYPES:\n\n";
+
+    std::cout << "1. User Correlation (--correlate-user <field_name>)\n";
+    std::cout << "   Maps IP addresses to username or email fields in CSV/delimited logs.\n";
+    std::cout << "   Perfect for tracking which users accessed from which IP addresses.\n\n";
+    std::cout << "   Examples:\n";
+    std::cout << "     " << program_name << " --correlate-user username auth.csv\n";
+    std::cout << "     " << program_name << " --correlate-user email login_log.csv\n";
+    std::cout << "     " << program_name << " --correlate-user user --output-json access.csv\n\n";
+
+    std::cout << "2. Host Correlation (--correlate-host <field_name>)\n";
+    std::cout << "   Maps IP addresses to hostname or domain fields.\n";
+    std::cout << "   Use with --extract-domain to automatically extract root domain from FQDNs.\n\n";
+    std::cout << "   Examples:\n";
+    std::cout << "     " << program_name << " --correlate-host hostname server_log.csv\n";
+    std::cout << "     " << program_name << " --correlate-host fqdn --extract-domain dns.csv\n";
+    std::cout << "     " << program_name << " --correlate-host server_name --output-json access.csv\n\n";
+    std::cout << "   Domain Extraction Examples:\n";
+    std::cout << "     mail.example.com     -> example.com\n";
+    std::cout << "     api.service.co.uk    -> service.co.uk (handles special TLDs)\n";
+    std::cout << "     vpn.corp.example.org -> example.org\n\n";
+
+    std::cout << "3. Custom Correlation (--correlate-custom <regex>)\n";
+    std::cout << "   Maps IP addresses using a custom regex pattern.\n";
+    std::cout << "   The first capture group (or full match if no groups) is used as the correlation value.\n\n";
+    std::cout << "   Examples:\n";
+    std::cout << "     " << program_name << " --correlate-custom 'action=(\\w+)' app.log\n";
+    std::cout << "     " << program_name << " --correlate-custom 'method=\"(GET|POST)\"' web.log\n";
+    std::cout << "     " << program_name << " --correlate-custom 'status=(\\d+)' nginx.log\n\n";
+
+    std::cout << "CSV FORMAT DETECTION:\n\n";
+    std::cout << "  Auto-detects CSV format from log files:\n";
+    std::cout << "  - Supported delimiters: , (comma), ; (semicolon), | (pipe), \\t (tab)\n";
+    std::cout << "  - Header row detection (alphabetic field names)\n";
+    std::cout << "  - Requires 80%% delimiter consistency across sample lines\n";
+    std::cout << "  - Field names are case-insensitive\n";
+    std::cout << "  - Handles quoted fields with embedded delimiters\n\n";
+    std::cout << "  Example CSV with header:\n";
+    std::cout << "    timestamp,ip,user,action\n";
+    std::cout << "    2024-01-13 12:00:00,192.168.1.1,alice@example.com,login\n";
+    std::cout << "    2024-01-13 12:05:00,192.168.1.2,bob@example.com,logout\n\n";
+
+    std::cout << "MULTIPLE VALUES PER IP:\n\n";
+    std::cout << "  When an IP appears with different correlation values, they are aggregated\n";
+    std::cout << "  and displayed as a comma-separated list.\n\n";
+    std::cout << "  Example:\n";
+    std::cout << "    Input: IP 192.168.1.1 seen with users \"alice\" and \"bob\"\n";
+    std::cout << "    Output: correlation column shows \"alice, bob\"\n\n";
+
+    std::cout << "OUTPUT GROUPING:\n\n";
+    std::cout << "  Results are automatically grouped by correlation value.\n";
+    std::cout << "  Groups are sorted by total event count (descending).\n\n";
+    std::cout << "  Table output format:\n";
+    std::cout << "    User: alice@example.com (2 IPs, 15 events)\n";
+    std::cout << "    ================================================\n";
+    std::cout << "    | IP Address  | First Seen | Last Seen | Count |\n";
+    std::cout << "    [IP details...]\n\n";
+    std::cout << "  JSON output format:\n";
+    std::cout << "    {\n";
+    std::cout << "      \"groups\": [\n";
+    std::cout << "        {\n";
+    std::cout << "          \"correlation_value\": \"alice@example.com\",\n";
+    std::cout << "          \"label\": \"User\",\n";
+    std::cout << "          \"unique_ips\": 2,\n";
+    std::cout << "          \"total_events\": 15,\n";
+    std::cout << "          \"ips\": [...]\n";
+    std::cout << "        }\n";
+    std::cout << "      ]\n";
+    std::cout << "    }\n\n";
+
+    std::cout << "PRACTICAL USE CASES:\n\n";
+    std::cout << "  1. Security Analysis:\n";
+    std::cout << "     Find shared credentials: Multiple users from same IP\n";
+    std::cout << "       " << program_name << " --correlate-user username auth.log\n\n";
+    std::cout << "  2. User Tracking:\n";
+    std::cout << "     Track user IP changes: Which IPs each user accessed from\n";
+    std::cout << "       " << program_name << " --correlate-user email --output-json login.csv\n\n";
+    std::cout << "  3. Network Mapping:\n";
+    std::cout << "     Map IPs to infrastructure: Group by hostname or domain\n";
+    std::cout << "       " << program_name << " --correlate-host server --extract-domain dns.csv\n\n";
+    std::cout << "  4. Pattern Analysis:\n";
+    std::cout << "     Analyze by HTTP method, status code, or custom patterns\n";
+    std::cout << "       " << program_name << " --correlate-custom 'status=(\\d+)' access.log\n\n";
+
+    std::cout << "LIMITATIONS AND NOTES:\n\n";
+    std::cout << "  - Only ONE correlation flag can be used at a time (mutually exclusive)\n";
+    std::cout << "  - Requires structured CSV/delimited input for --correlate-user/host\n";
+    std::cout << "  - Custom regex works on any text format\n";
+    std::cout << "  - CSV detection samples first 20 lines (falls back if detection fails)\n";
+    std::cout << "  - Correlation disables parallel parsing (uses single-threaded mode)\n";
+    std::cout << "  - Works with compressed files (.gz, .bz2, .xz)\n";
+    std::cout << "  - Compatible with all output formats (table, JSON)\n\n";
+
+    std::cout << "COMPLETE EXAMPLE WORKFLOW:\n\n";
+    std::cout << "  # Sample CSV file: login_audit.csv\n";
+    std::cout << "  timestamp,ip_address,username,action,result\n";
+    std::cout << "  2024-01-13 10:00:00,192.168.1.100,alice,login,success\n";
+    std::cout << "  2024-01-13 10:15:00,192.168.1.101,bob,login,success\n";
+    std::cout << "  2024-01-13 10:30:00,192.168.1.100,alice,logout,success\n";
+    std::cout << "  2024-01-13 11:00:00,192.168.1.100,charlie,login,failed\n\n";
+    std::cout << "  # Analysis command:\n";
+    std::cout << "  " << program_name << " --correlate-user username login_audit.csv\n\n";
+    std::cout << "  # Output shows:\n";
+    std::cout << "  User: alice, charlie (1 IP, 3 events)\n";
+    std::cout << "    IP 192.168.1.100: First=10:00, Last=11:00, Count=3\n";
+    std::cout << "  User: bob (1 IP, 1 event)\n";
+    std::cout << "    IP 192.168.1.101: First=10:15, Last=10:15, Count=1\n\n";
+
+    std::cout << "For general help: " << program_name << " --help\n";
+    std::cout << "For examples:     " << program_name << " --help-extended\n\n";
+}
+
 void print_version() {
     std::cout << "\n";
     std::cout << "     ___________ ____________\n";
@@ -235,6 +361,12 @@ int main(int argc, char* argv[]) {
     // Group-by functionality
     GroupByType group_by = GroupByType::NONE;
 
+    // Correlation functionality
+    ipdigger::CorrelationType correlation_type = ipdigger::CorrelationType::NONE;
+    std::string correlation_field;
+    std::string correlation_regex;
+    bool extract_domain_flag = false;
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -243,6 +375,9 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--help-extended") {
             print_extended_help(argv[0]);
+            return 0;
+        } else if (arg == "--help-correlation") {
+            print_correlation_help(argv[0]);
             return 0;
         } else if (arg == "--version" || arg == "-v") {
             print_version();
@@ -350,6 +485,41 @@ int main(int argc, char* argv[]) {
             group_by = GroupByType::COUNTRY;
         } else if (arg == "--group-by-org") {
             group_by = GroupByType::ORGANIZATION;
+        } else if (arg == "--correlate-user") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --correlate-user requires a field name argument\n";
+                return 1;
+            }
+            if (correlation_type != ipdigger::CorrelationType::NONE) {
+                std::cerr << "Error: Only one correlation flag allowed at a time\n";
+                return 1;
+            }
+            correlation_type = ipdigger::CorrelationType::USER;
+            correlation_field = argv[++i];
+        } else if (arg == "--correlate-host") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --correlate-host requires a field name argument\n";
+                return 1;
+            }
+            if (correlation_type != ipdigger::CorrelationType::NONE) {
+                std::cerr << "Error: Only one correlation flag allowed at a time\n";
+                return 1;
+            }
+            correlation_type = ipdigger::CorrelationType::HOST;
+            correlation_field = argv[++i];
+        } else if (arg == "--correlate-custom") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --correlate-custom requires a regex pattern argument\n";
+                return 1;
+            }
+            if (correlation_type != ipdigger::CorrelationType::NONE) {
+                std::cerr << "Error: Only one correlation flag allowed at a time\n";
+                return 1;
+            }
+            correlation_type = ipdigger::CorrelationType::CUSTOM;
+            correlation_regex = argv[++i];
+        } else if (arg == "--extract-domain") {
+            extract_domain_flag = true;
         } else if (arg == "--threads") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --threads requires a number argument\n";
@@ -461,6 +631,28 @@ int main(int argc, char* argv[]) {
             // Parse all files (show progress if not in JSON mode)
             bool show_progress = !output_json;
 
+            // Prepare correlation settings if enabled
+            ipdigger::CorrelationSettings correlation_settings;
+            const ipdigger::CorrelationSettings* correlation_ptr = nullptr;
+            if (correlation_type != ipdigger::CorrelationType::NONE) {
+                correlation_settings.type = correlation_type;
+                correlation_settings.field_name = correlation_field;
+                correlation_settings.custom_regex = correlation_regex;
+                correlation_settings.extract_domain = extract_domain_flag;
+
+                // Compile custom regex if needed
+                if (correlation_type == ipdigger::CorrelationType::CUSTOM && !correlation_regex.empty()) {
+                    try {
+                        correlation_settings.compiled_regex = std::make_shared<std::regex>(correlation_regex);
+                    } catch (const std::regex_error& e) {
+                        std::cerr << "Error: Invalid correlation regex pattern: " << e.what() << "\n";
+                        return 1;
+                    }
+                }
+
+                correlation_ptr = &correlation_settings;
+            }
+
             if (files.size() == 1) {
                 // Check if file is compressed (compressed files can't use parallel parsing)
                 bool is_compressed_file = ipdigger::is_compressed(files[0]);
@@ -474,17 +666,18 @@ int main(int argc, char* argv[]) {
                 if (actual_threads > 1 && !is_compressed_file) {
                     entries = ipdigger::parse_file_parallel(
                         files[0], cache, show_progress, detect_login,
-                        search_string, search_regex, actual_threads, config.chunk_size_mb
+                        search_string, search_regex, actual_threads, config.chunk_size_mb,
+                        correlation_ptr
                     );
                 } else {
                     // Single-threaded (either requested or required for compressed files)
                     entries = ipdigger::parse_file(files[0], cache, show_progress, detect_login,
-                                                  search_string, search_regex);
+                                                  search_string, search_regex, correlation_ptr);
                 }
             } else {
                 // Multiple files - use multi-file parallel parser
                 entries = ipdigger::parse_files(files, cache, show_progress, detect_login,
-                                               search_string, search_regex);
+                                               search_string, search_regex, correlation_ptr);
             }
         }
 
@@ -737,7 +930,24 @@ int main(int argc, char* argv[]) {
 
         // Display results (always use statistics output)
         bool search_active = !search_string.empty() || !search_regex.empty();
-        if (output_geomap) {
+
+        // Correlation output takes priority over other grouping
+        if (correlation_type != ipdigger::CorrelationType::NONE) {
+            std::string label = "Correlation";
+            if (correlation_type == ipdigger::CorrelationType::USER) {
+                label = "User";
+            } else if (correlation_type == ipdigger::CorrelationType::HOST) {
+                label = "Host";
+            } else if (correlation_type == ipdigger::CorrelationType::CUSTOM) {
+                label = "Custom";
+            }
+
+            if (output_json) {
+                ipdigger::print_stats_json_grouped_by_correlation(stats, label, search_active);
+            } else {
+                ipdigger::print_stats_table_grouped_by_correlation(stats, label, search_active);
+            }
+        } else if (output_geomap) {
             ipdigger::print_stats_geomap(stats, search_active);
         } else if (output_json) {
             // JSON output with optional grouping

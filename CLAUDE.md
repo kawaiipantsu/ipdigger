@@ -123,6 +123,30 @@ make
 - `parsing_threads`: Thread count for parsing (0 = auto-detect)
 - `chunk_size_mb`: Chunk size for parallel parsing (default: 10MB)
 
+**include/correlation.h**: IP Correlation API
+- `CorrelationType`: Enum for correlation types (NONE, USER, HOST, CUSTOM)
+- `CorrelationSettings`: Configuration for correlation operations (type, field names, regex, delimiter info)
+- `FormatDetectionResult`: Result of CSV format auto-detection (delimiter, header, field count, field map)
+- CSV detection and parsing functions
+- Correlation value extraction functions (user, host, custom regex)
+- Grouped output functions (table and JSON)
+
+**src/correlation.cpp**: IP Correlation implementation
+- `detect_csv_format()`: Auto-detect CSV delimiter and header from sample lines (80% consistency threshold)
+- `parse_csv_line()`: State machine CSV parser with quote handling (handles embedded delimiters)
+- `map_field_names()`: Build field_name → column_index map from CSV header (case-insensitive)
+- `extract_field_value()`: Lookup field value by name from parsed CSV line
+- `extract_domain()`: Extract root domain from FQDN (handles special TLDs like .co.uk)
+- `correlate_user()`: Extract user field value from CSV line
+- `correlate_host()`: Extract host field value with optional domain extraction
+- `correlate_custom()`: Apply regex pattern to extract custom correlation value
+- `extract_correlation_value()`: Unified dispatcher for all correlation types
+- `print_stats_table_grouped_by_correlation()`: Table output grouped by correlation value
+- `print_stats_json_grouped_by_correlation()`: JSON output grouped by correlation value
+- Supports comma, semicolon, pipe, and tab delimiters
+- Aggregates multiple correlation values per IP (comma-separated)
+- Groups sorted by total event count (descending)
+
 ### Date Format Support
 
 The tool detects and parses multiple timestamp formats automatically:

@@ -1,4 +1,4 @@
-.TH IPDIGGER 1 "2026-01-19" "IPDigger 2.3.0" "User Commands"
+.TH IPDIGGER 1 "2026-01-19" "IPDigger 2.4.0" "User Commands"
 .SH NAME
 ipdigger \- extract and enrich IP addresses from log files
 .SH SYNOPSIS
@@ -14,10 +14,11 @@ ipdigger \- extract and enrich IP addresses from log files
 .SH DESCRIPTION
 .B IPDigger
 is a secure C++ log analysis tool for extracting and enriching IP addresses from log files.
-It supports IPv4 and IPv6 extraction, geolocation, threat intelligence (AbuseIPDB, THUGSred TI),
-WHOIS data, reverse DNS, TLS/SSL inspection, HTTP detection, login tracking, time-range filtering,
-group-by analysis (ASN/country/org), compressed file support (.gz/.bz2/.xz), and multi-threaded
-parsing for high-performance analysis of large log files.
+It supports IPv4 and IPv6 extraction, IP correlation (map IPs to users/hostnames/patterns),
+geolocation, threat intelligence (AbuseIPDB, THUGSred TI), WHOIS data, reverse DNS, TLS/SSL
+inspection, HTTP detection, login tracking, time-range filtering, group-by analysis (ASN/country/org),
+compressed file support (.gz/.bz2/.xz), and multi-threaded parsing for high-performance analysis
+of large log files.
 .SH OPTIONS
 .SS "Output Formats"
 .TP
@@ -65,6 +66,26 @@ Group IPs by country code (auto-enables \fB\-\-enrich\-geo\fR).
 .TP
 .B \-\-group\-by\-org
 Group IPs by organization/ISP name (auto-enables \fB\-\-enrich\-geo\fR).
+.SS "IP Correlation Options"
+.TP
+.B \-\-correlate\-user \fI<field_name>\fR
+Correlate IPs to username/email field from CSV logs. Auto-detects CSV format (comma, semicolon, pipe, tab delimiters).
+Groups output by user, showing all IPs for each user. Field names are case-insensitive.
+.TP
+.B \-\-correlate\-host \fI<field_name>\fR
+Correlate IPs to hostname/domain field from CSV logs. Use with \fB\-\-extract\-domain\fR to extract root domain from FQDNs.
+Groups output by hostname, showing all IPs for each host.
+.TP
+.B \-\-correlate\-custom \fI<regex>\fR
+Correlate IPs using custom regex pattern. Works on any text format (not just CSV).
+First capture group (or full match if no groups) is used as correlation value.
+Groups output by extracted pattern.
+.TP
+.B \-\-extract\-domain
+Extract root domain from hostnames when using \fB\-\-correlate\-host\fR.
+Example: mail.example.com → example.com. Handles special TLDs like .co.uk.
+.PP
+Note: Only one correlation flag can be used at a time. Use \fB\-\-help\-correlation\fR for detailed guide.
 .SS "Filtering Options"
 .TP
 .B \-\-no\-private
@@ -121,6 +142,12 @@ Number of threads for parsing (default: auto-detect CPU cores).
 .TP
 .B \-h, \-\-help
 Display help message and exit.
+.TP
+.B \-\-help\-extended
+Display extended help with comprehensive examples and documentation.
+.TP
+.B \-\-help\-correlation
+Display detailed correlation feature guide with use cases and examples.
 .TP
 .B \-v, \-\-version
 Display version information and exit.
@@ -215,6 +242,22 @@ Failed login attempts:
 .TP
 Multiple patterns with regex:
 .B ipdigger \-\-search\-regex "error|warning|critical" /var/log/nginx/error.log
+.SS "IP Correlation"
+.TP
+Track which users accessed from which IPs:
+.B ipdigger \-\-correlate\-user username auth.csv
+.TP
+Map IPs to hostnames with domain extraction:
+.B ipdigger \-\-correlate\-host fqdn \-\-extract\-domain dns.csv
+.TP
+Correlate by HTTP method:
+.B ipdigger \-\-correlate\-custom 'method="(GET|POST)"' web.log
+.TP
+Find shared credentials (same IP, different users):
+.B ipdigger \-\-correlate\-user email \-\-output\-json login_audit.csv
+.TP
+Group IPs by action type:
+.B ipdigger \-\-correlate\-custom 'action=(\\w+)' /var/log/app.log
 .SS "Multi-File Processing"
 .TP
 Process multiple files with glob patterns (quote the pattern):

@@ -3,6 +3,7 @@
 #include "regex_cache.h"
 #include "progress.h"
 #include "compression.h"
+#include "correlation.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -21,7 +22,7 @@
 namespace ipdigger {
 
 std::string get_version() {
-    return "2.3.0";
+    return "2.4.0";
 }
 
 // RegexCache implementation
@@ -830,8 +831,15 @@ std::vector<IPEntry> parse_file_parallel(
     const std::string& search_string,
     const std::string& search_regex,
     size_t num_threads,
-    size_t min_chunk_size_mb
+    size_t min_chunk_size_mb,
+    const CorrelationSettings* correlation_settings
 ) {
+    // Correlation requires sequential processing of the entire file
+    // Fall back to single-threaded parsing if correlation is enabled
+    if (correlation_settings && correlation_settings->type != CorrelationType::NONE) {
+        return parse_file(filename, cache, show_progress, detect_login, search_string, search_regex, correlation_settings);
+    }
+
     // Calculate chunks
     auto chunks = calculate_chunks(filename, num_threads, min_chunk_size_mb);
 
@@ -841,7 +849,7 @@ std::vector<IPEntry> parse_file_parallel(
 
     // If only one chunk, use regular parsing
     if (chunks.size() == 1) {
-        return parse_file(filename, cache, show_progress, detect_login, search_string, search_regex);
+        return parse_file(filename, cache, show_progress, detect_login, search_string, search_regex, correlation_settings);
     }
 
     // Get file size for progress tracking
@@ -974,7 +982,8 @@ std::vector<IPEntry> parse_stdin(const RegexCache& cache, bool detect_login,
 }
 
 std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& cache, bool show_progress, bool detect_login,
-                                 const std::string& search_string, const std::string& search_regex) {
+                                 const std::string& search_string, const std::string& search_regex,
+                                 const CorrelationSettings* correlation_settings) {
     std::vector<IPEntry> entries;
 
     // Compile regex pattern if search_regex is provided
@@ -1003,12 +1012,53 @@ std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& c
     ProgressTracker progress;
     progress.init(file_size, show_progress, filename);
 
+    // CSV format detection for correlation
+    CorrelationSettings local_settings;
+    bool use_correlation = false;
+    if (correlation_settings && correlation_settings->type != CorrelationType::NONE) {
+        // Read first 20 lines for format detection
+        std::vector<std::string> sample_lines;
+        std::string sample_line;
+        size_t sample_count = 0;
+        while (reader->getline(sample_line) && sample_count < 20) {
+            sample_lines.push_back(sample_line);
+            sample_count++;
+        }
+
+        // Detect CSV format
+        FormatDetectionResult detection = detect_csv_format(sample_lines);
+        if (detection.detected) {
+            // Copy settings and add detected format info
+            local_settings = *correlation_settings;
+            local_settings.delimiter = detection.delimiter;
+            local_settings.has_header = detection.has_header;
+            local_settings.field_map = detection.field_map;
+            use_correlation = true;
+        } else {
+            std::cerr << "Warning: Failed to detect CSV format, correlation disabled\n";
+        }
+
+        // Reset reader to beginning
+        reader = create_reader(filename);
+    }
+
     std::string line;
     size_t line_number = 0;
     size_t last_position = 0;
 
     while (reader->getline(line)) {
         line_number++;
+
+        // Skip header line if it exists
+        if (use_correlation && local_settings.has_header && line_number == 1) {
+            // Update progress for header line
+            size_t current_position = reader->tell();
+            size_t bytes_read = current_position - last_position;
+            last_position = current_position;
+            progress.add_bytes(bytes_read);
+            progress.display();
+            continue;
+        }
 
         // Extract all IP addresses from this line using pre-compiled patterns
         auto ip_addresses = extract_ip_addresses(line, cache);
@@ -1049,6 +1099,12 @@ std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& c
             line_matches = true;
         }
 
+        // Extract correlation value if enabled
+        std::string correlation_value;
+        if (use_correlation) {
+            correlation_value = extract_correlation_value(line, local_settings);
+        }
+
         // Create an entry for each IP address found on this line
         for (const auto& ip : ip_addresses) {
             IPEntry entry;
@@ -1059,6 +1115,15 @@ std::vector<IPEntry> parse_file(const std::string& filename, const RegexCache& c
             entry.line_number = line_number;
             entry.timestamp = timestamp;
             entry.matches_search = line_matches;
+
+            // Add correlation value to enrichment data
+            if (!correlation_value.empty()) {
+                if (!entry.enrichment) {
+                    entry.enrichment = std::make_shared<EnrichmentData>();
+                }
+                entry.enrichment->data["correlation"] = correlation_value;
+            }
+
             entries.push_back(entry);
         }
 
@@ -1120,7 +1185,8 @@ static std::vector<IPEntry> parse_files_parallel(
     bool detect_login,
     const std::string& search_string,
     const std::string& search_regex,
-    size_t num_threads
+    size_t num_threads,
+    const CorrelationSettings* correlation_settings
 ) {
     std::vector<IPEntry> all_entries;
     std::mutex entries_mutex;
@@ -1136,7 +1202,7 @@ static std::vector<IPEntry> parse_files_parallel(
             try {
                 // Parse file (progress shown per-file)
                 auto entries = parse_file(filenames[idx], cache, show_progress, detect_login,
-                                         search_string, search_regex);
+                                         search_string, search_regex, correlation_settings);
 
                 // Merge results (thread-safe)
                 {
@@ -1171,11 +1237,12 @@ static std::vector<IPEntry> parse_files_parallel(
 }
 
 std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, const RegexCache& cache, bool show_progress, bool detect_login,
-                                  const std::string& search_string, const std::string& search_regex) {
+                                  const std::string& search_string, const std::string& search_regex,
+                                  const CorrelationSettings* correlation_settings) {
     // For single file, use direct parsing
     if (filenames.size() == 1) {
         try {
-            return parse_file(filenames[0], cache, show_progress, detect_login, search_string, search_regex);
+            return parse_file(filenames[0], cache, show_progress, detect_login, search_string, search_regex, correlation_settings);
         } catch (const std::exception& e) {
             std::cerr << "Warning: " << e.what() << "\n";
             return std::vector<IPEntry>();
@@ -1188,7 +1255,7 @@ std::vector<IPEntry> parse_files(const std::vector<std::string>& filenames, cons
     size_t num_threads = (hw_threads > 0) ? hw_threads : 4;
 
     return parse_files_parallel(filenames, cache, show_progress, detect_login,
-                               search_string, search_regex, num_threads);
+                               search_string, search_regex, num_threads, correlation_settings);
 }
 
 std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& entries) {
@@ -1237,6 +1304,38 @@ std::map<std::string, IPStats> generate_statistics(const std::vector<IPEntry>& e
         // Count search hits
         if (entry.matches_search) {
             stat.search_hits++;
+        }
+    }
+
+    // Aggregate correlation values per IP
+    // Collect all unique correlation values for each IP
+    std::map<std::string, std::set<std::string>> ip_correlations;
+    for (const auto& entry : entries) {
+        if (entry.enrichment && entry.enrichment->data.count("correlation")) {
+            const std::string& corr_value = entry.enrichment->data.at("correlation");
+            if (!corr_value.empty()) {
+                ip_correlations[entry.ip_address].insert(corr_value);
+            }
+        }
+    }
+
+    // Join multiple correlation values with ", " and add to stats
+    for (auto& [ip, stat] : stats) {
+        if (ip_correlations.count(ip)) {
+            const auto& corr_set = ip_correlations[ip];
+            if (!corr_set.empty()) {
+                std::string joined;
+                for (auto it = corr_set.begin(); it != corr_set.end(); ++it) {
+                    if (it != corr_set.begin()) {
+                        joined += ", ";
+                    }
+                    joined += *it;
+                }
+                if (!stat.enrichment) {
+                    stat.enrichment = std::make_shared<EnrichmentData>();
+                }
+                stat.enrichment->data["correlation"] = joined;
+            }
         }
     }
 
@@ -1552,7 +1651,7 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
 }
 
 // Helper function to escape JSON strings
-static std::string json_escape(const std::string& str) {
+std::string json_escape(const std::string& str) {
     std::string escaped;
     escaped.reserve(str.size());
 
