@@ -24,6 +24,7 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 🌍 **GeoIP**: MaxMind country/city/ASN data with latitude/longitude
 - 🗺️ **Map Visualization**: Export GeoJSON for mapping tools (Leaflet, Mapbox, QGIS)
 - 🔐 **Login Detection**: Track authentication success/failures
+- 🚨 **Attack Detection**: Detect DDoS, password spray, port scanning, and brute force patterns
 - 🛡️ **Threat Intel**: AbuseIPDB abuse scoring & Tor exit node detection
 - 📋 **WHOIS**: Network ownership and abuse contacts
 - 🌐 **Reverse DNS**: Hostname resolution
@@ -489,6 +490,61 @@ ipdigger --time-range ",24hours" --include-no-timestamp /var/log/auth.log
 - Use `--include-no-timestamp` to include entries that have no date
 - Relative times calculated from current time (now)
 - Can be combined with other filters: `--no-private`, `--top-limit`, `--geo-filter-*`
+
+### Attack Detection
+
+Detect various network attack patterns based on temporal analysis of log events:
+
+```bash
+# Detect DDoS patterns (high volume in short time)
+ipdigger --detect-ddos /var/log/nginx/access.log
+
+# Detect brute force authentication attacks
+ipdigger --detect-bruteforce --detect-login /var/log/auth.log
+
+# Detect password spray attacks
+ipdigger --detect-spray --detect-login /var/log/auth.log
+
+# Detect port/network scanning
+ipdigger --detect-scan /var/log/firewall.log
+
+# Detect multiple attack types with custom threshold
+ipdigger --detect-ddos --detect-bruteforce --threshold 20 --window 1m /var/log/auth.log
+
+# Combine with enrichment for detailed analysis
+ipdigger --detect-ddos --detect-scan --enrich-geo --enrich-abuseipdb /var/log/nginx/access.log
+
+# Output with detection results
+ipdigger --detect-ddos --detect-bruteforce --output-json /var/log/auth.log
+```
+
+**Detection Types:**
+- **--detect-ddos** - High volume of requests (>= threshold) within a short time window
+- **--detect-spray** - Password spray attacks: moderate failed logins distributed over time
+- **--detect-scan** - Port/network scanning: many connections in very short time (< 1/5 of window)
+- **--detect-bruteforce** - Brute force attacks: high failed login attempts in short window
+
+**Configuration:**
+- **--threshold N** - Event count threshold (default: 10)
+- **--window <time>** - Time window for analysis (default: 5m)
+  - Supported units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days)
+  - Examples: `30s`, `5m`, `1h`, `7d`
+
+**Output:**
+- **Table format** - Shows DDoS/Spray/Scan/BruteForce columns with Yes/No values
+- **JSON format** - Includes `is_ddos`, `is_spray`, `is_scan`, `is_bruteforce` boolean fields
+
+**Detection Logic:**
+- **DDoS**: Count >= threshold within time window
+- **Brute Force**: Failed logins >= threshold within time window (requires --detect-login)
+- **Spray**: Failed logins between 20-80% of threshold over longer period
+- **Scan**: Count >= threshold within very short time (≤ window/5)
+
+**Best Practices:**
+- Combine `--detect-bruteforce` and `--detect-spray` with `--detect-login` for accurate results
+- Adjust `--threshold` based on your environment (higher for busy servers)
+- Use shorter `--window` for real-time detection, longer for historical analysis
+- Combine with `--enrich-abuseipdb` to cross-reference with known malicious IPs
 
 ### JSON Output
 ```bash

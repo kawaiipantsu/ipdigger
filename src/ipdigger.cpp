@@ -512,6 +512,125 @@ TimeRange parse_time_range_arg(const std::string& range_arg, const RegexCache& c
     return range;
 }
 
+// Parse time window string (e.g., "5m", "1h", "30s") to seconds
+time_t parse_time_window(const std::string& window_str) {
+    // Pattern: number followed by time unit
+    std::regex pattern(R"(^(\d+)(seconds?|minutes?|hours?|days?|weeks?|months?|years?|sec|min|hr|s|m|h|d|w|mo|yr|y)$)",
+                       std::regex::icase);
+    std::smatch match;
+
+    if (!std::regex_match(window_str, match, pattern)) {
+        throw std::runtime_error("Invalid time window format: " + window_str);
+    }
+
+    long long number = std::stoll(match[1].str());
+    std::string unit = match[2].str();
+
+    // Convert to lowercase for comparison
+    std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+
+    // Calculate seconds based on unit
+    if (unit == "second" || unit == "seconds" || unit == "sec" || unit == "s") {
+        return number;
+    } else if (unit == "minute" || unit == "minutes" || unit == "min" || unit == "m") {
+        return number * 60;
+    } else if (unit == "hour" || unit == "hours" || unit == "hr" || unit == "h") {
+        return number * 3600;
+    } else if (unit == "day" || unit == "days" || unit == "d") {
+        return number * 86400;
+    } else if (unit == "week" || unit == "weeks" || unit == "w") {
+        return number * 604800;
+    } else if (unit == "month" || unit == "months" || unit == "mo") {
+        return number * 2592000;  // 30 days
+    } else if (unit == "year" || unit == "years" || unit == "yr" || unit == "y") {
+        return number * 31536000;  // 365 days
+    } else {
+        throw std::runtime_error("Unknown time unit: " + unit);
+    }
+}
+
+// Detect attack patterns in IP statistics
+void detect_attack_patterns(std::map<std::string, IPStats>& stats,
+                            bool detect_ddos, bool detect_spray,
+                            bool detect_scan, bool detect_bruteforce,
+                            size_t threshold, time_t window_seconds,
+                            const std::vector<IPEntry>& entries) {
+    // Group entries by IP for time-based analysis
+    std::map<std::string, std::vector<IPEntry>> ip_entries;
+    for (const auto& entry : entries) {
+        ip_entries[entry.ip_address].push_back(entry);
+    }
+
+    // Analyze each IP's patterns
+    for (auto& stat_pair : stats) {
+        const std::string& ip = stat_pair.first;
+        IPStats& stat = stat_pair.second;
+
+        // Skip if no entries for this IP
+        if (ip_entries.find(ip) == ip_entries.end()) {
+            continue;
+        }
+
+        const auto& ip_entry_list = ip_entries[ip];
+
+        // DDoS Detection: High volume of requests in short time window
+        if (detect_ddos) {
+            if (stat.first_timestamp > 0 && stat.last_timestamp > 0) {
+                time_t time_span = stat.last_timestamp - stat.first_timestamp;
+                // If we have threshold+ events within the time window
+                if (stat.count >= threshold) {
+                    if (time_span <= window_seconds) {
+                        stat.is_ddos = true;
+                    }
+                }
+            }
+        }
+
+        // Brute Force Detection: Multiple failed login attempts in time window
+        if (detect_bruteforce) {
+            if (stat.login_failed_count >= threshold) {
+                // Check if failed logins occurred within time window
+                if (stat.first_timestamp > 0 && stat.last_timestamp > 0) {
+                    time_t time_span = stat.last_timestamp - stat.first_timestamp;
+                    if (time_span <= window_seconds) {
+                        stat.is_bruteforce = true;
+                    }
+                }
+            }
+        }
+
+        // Password Spray Detection: Low attempts per target but many different targets
+        // This is approximated by detecting IPs with failed logins but low count per occurrence
+        if (detect_spray) {
+            // Spray attacks typically have:
+            // 1. Multiple failed logins (but fewer than brute force)
+            // 2. Distributed over time (not all in short window)
+            if (stat.login_failed_count >= threshold / 2 && stat.login_failed_count < threshold) {
+                if (stat.first_timestamp > 0 && stat.last_timestamp > 0) {
+                    time_t time_span = stat.last_timestamp - stat.first_timestamp;
+                    // Spread across longer time than brute force
+                    if (time_span > window_seconds && time_span < window_seconds * 10) {
+                        stat.is_spray = true;
+                    }
+                }
+            }
+        }
+
+        // Scan Detection: Many connections in very short time (faster than DDoS)
+        if (detect_scan) {
+            if (stat.count >= threshold) {
+                if (stat.first_timestamp > 0 && stat.last_timestamp > 0) {
+                    time_t time_span = stat.last_timestamp - stat.first_timestamp;
+                    // Scans are typically very fast - within a fraction of the window
+                    if (time_span > 0 && time_span <= window_seconds / 5) {
+                        stat.is_scan = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Chunk information for parallel parsing
 struct ChunkInfo {
     size_t start_offset;      // Byte offset where chunk starts
@@ -1237,6 +1356,15 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
         }
     }
 
+    // Check if attack detection is enabled
+    bool has_detection_data = false;
+    for (const auto& [ip, stat] : stats) {
+        if (stat.is_ddos || stat.is_spray || stat.is_scan || stat.is_bruteforce) {
+            has_detection_data = true;
+            break;
+        }
+    }
+
     // Check for enrichment data and collect field names
     std::vector<std::string> enrich_fields;
     std::map<std::string, size_t> enrich_widths;
@@ -1288,6 +1416,10 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
     size_t count_width = 5;
     size_t search_hits_width = 10;  // "SearchHits"
     size_t login_width = 12;  // "OK: 5 F: 10"
+    size_t ddos_width = 4;  // "DDoS"
+    size_t spray_width = 5;  // "Spray"
+    size_t scan_width = 4;  // "Scan"
+    size_t bruteforce_width = 10;  // "BruteForce"
 
     for (const auto& [ip, stat] : stats) {
         ip_width = std::max(ip_width, ip.length());
@@ -1311,6 +1443,9 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
     if (has_login_data) {
         separator_width += login_width + 3;
     }
+    if (has_detection_data) {
+        separator_width += ddos_width + spray_width + scan_width + bruteforce_width + 12;  // +12 for separators
+    }
     for (const auto& field : enrich_fields) {
         separator_width += enrich_widths[field] + 3;
     }
@@ -1325,6 +1460,12 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
     }
     if (has_login_data) {
         std::cout << " | " << std::left << std::setw(login_width) << "Login";
+    }
+    if (has_detection_data) {
+        std::cout << " | " << std::left << std::setw(ddos_width) << "DDoS";
+        std::cout << " | " << std::left << std::setw(spray_width) << "Spray";
+        std::cout << " | " << std::left << std::setw(scan_width) << "Scan";
+        std::cout << " | " << std::left << std::setw(bruteforce_width) << "BruteForce";
     }
     for (const auto& field : enrich_fields) {
         // Use custom display names for special fields
@@ -1384,6 +1525,12 @@ void print_stats_table(const std::map<std::string, IPStats>& stats, bool show_se
             std::string login_str = "OK:" + std::to_string(stat.login_success_count) +
                                    " F:" + std::to_string(stat.login_failed_count);
             std::cout << " | " << std::left << std::setw(login_width) << login_str;
+        }
+        if (has_detection_data) {
+            std::cout << " | " << std::left << std::setw(ddos_width) << (stat.is_ddos ? "Yes" : "No");
+            std::cout << " | " << std::left << std::setw(spray_width) << (stat.is_spray ? "Yes" : "No");
+            std::cout << " | " << std::left << std::setw(scan_width) << (stat.is_scan ? "Yes" : "No");
+            std::cout << " | " << std::left << std::setw(bruteforce_width) << (stat.is_bruteforce ? "Yes" : "No");
         }
         for (const auto& field : enrich_fields) {
             std::string value = "";
@@ -1526,7 +1673,11 @@ void print_stats_json(const std::map<std::string, IPStats>& stats, bool show_sea
         std::cout << "      \"first_timestamp\": " << stat.first_timestamp << ",\n";
         std::cout << "      \"last_timestamp\": " << stat.last_timestamp << ",\n";
         std::cout << "      \"login_success_count\": " << stat.login_success_count << ",\n";
-        std::cout << "      \"login_failed_count\": " << stat.login_failed_count;
+        std::cout << "      \"login_failed_count\": " << stat.login_failed_count << ",\n";
+        std::cout << "      \"is_ddos\": " << (stat.is_ddos ? "true" : "false") << ",\n";
+        std::cout << "      \"is_spray\": " << (stat.is_spray ? "true" : "false") << ",\n";
+        std::cout << "      \"is_scan\": " << (stat.is_scan ? "true" : "false") << ",\n";
+        std::cout << "      \"is_bruteforce\": " << (stat.is_bruteforce ? "true" : "false");
 
         if (show_search_hits) {
             std::cout << ",\n";
@@ -1614,7 +1765,11 @@ void print_stats_geomap(const std::map<std::string, IPStats>& stats, bool show_s
         std::cout << "        \"first_timestamp\": " << stat.first_timestamp << ",\n";
         std::cout << "        \"last_timestamp\": " << stat.last_timestamp << ",\n";
         std::cout << "        \"login_success_count\": " << stat.login_success_count << ",\n";
-        std::cout << "        \"login_failed_count\": " << stat.login_failed_count;
+        std::cout << "        \"login_failed_count\": " << stat.login_failed_count << ",\n";
+        std::cout << "        \"is_ddos\": " << (stat.is_ddos ? "true" : "false") << ",\n";
+        std::cout << "        \"is_spray\": " << (stat.is_spray ? "true" : "false") << ",\n";
+        std::cout << "        \"is_scan\": " << (stat.is_scan ? "true" : "false") << ",\n";
+        std::cout << "        \"is_bruteforce\": " << (stat.is_bruteforce ? "true" : "false");
 
         if (show_search_hits) {
             std::cout << ",\n";

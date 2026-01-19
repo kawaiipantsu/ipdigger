@@ -41,6 +41,16 @@ struct IPStats {
     time_t first_timestamp;
     time_t last_timestamp;
     std::shared_ptr<EnrichmentData> enrichment;  // Optional enrichment data
+
+    // Attack pattern detection flags
+    bool is_ddos;        // High volume of requests in short time
+    bool is_spray;       // Password spray attack pattern
+    bool is_scan;        // Port/network scanning pattern
+    bool is_bruteforce;  // Brute force attack pattern
+
+    IPStats() : count(0), login_success_count(0), login_failed_count(0), search_hits(0),
+                first_timestamp(0), last_timestamp(0),
+                is_ddos(false), is_spray(false), is_scan(false), is_bruteforce(false) {}
 };
 
 /**
@@ -268,6 +278,30 @@ time_t parse_time_string(const std::string& time_str, const RegexCache& cache);
  * @return TimeRange struct with parsed boundaries
  */
 TimeRange parse_time_range_arg(const std::string& range_arg, const RegexCache& cache);
+
+/**
+ * Parse time window string (e.g., "5m", "1h", "30s") to seconds
+ * @param window_str Time window string
+ * @return Number of seconds
+ */
+time_t parse_time_window(const std::string& window_str);
+
+/**
+ * Detect attack patterns in IP statistics
+ * @param stats Map of IP statistics to analyze
+ * @param detect_ddos Enable DDoS detection
+ * @param detect_spray Enable password spray detection
+ * @param detect_scan Enable scan detection
+ * @param detect_bruteforce Enable brute force detection
+ * @param threshold Event count threshold (default: 10)
+ * @param window_seconds Time window in seconds (default: 300 = 5 minutes)
+ * @param entries Original entries for pattern analysis
+ */
+void detect_attack_patterns(std::map<std::string, IPStats>& stats,
+                            bool detect_ddos, bool detect_spray,
+                            bool detect_scan, bool detect_bruteforce,
+                            size_t threshold, time_t window_seconds,
+                            const std::vector<IPEntry>& entries);
 
 } // namespace ipdigger
 

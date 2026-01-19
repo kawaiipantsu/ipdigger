@@ -37,6 +37,14 @@ void print_usage(const char* program_name) {
     std::cout << "  --enrich-http      Enrich IPs with HTTP server data (port, status, server, CSP, title)\n";
     std::cout << "  --follow-redirects Follow HTTP redirects when using --enrich-http\n";
     std::cout << "  --detect-login     Detect and track login attempts (success/failed)\n";
+    std::cout << "  --detect-ddos      Detect DDoS attack patterns (high volume in short time)\n";
+    std::cout << "  --detect-spray     Detect password spray attack patterns\n";
+    std::cout << "  --detect-scan      Detect port/network scanning patterns\n";
+    std::cout << "  --detect-bruteforce Detect brute force attack patterns\n";
+    std::cout << "  --threshold <N>    Event count threshold for attack detection (default: 10)\n";
+    std::cout << "  --window <time>    Time window for attack detection (default: 5m)\n";
+    std::cout << "                     Supported units: s (seconds), m (minutes), h (hours), d (days)\n";
+    std::cout << "                     Examples: 30s, 5m, 1h, 7d\n";
     std::cout << "  --search <string>  Filter lines by literal string (case-insensitive) and count hits per IP\n";
     std::cout << "  --search-regex <pattern> Filter lines by regex pattern (case-insensitive) and count hits per IP\n";
     std::cout << "  --no-private       Exclude private/local network addresses from output\n";
@@ -87,7 +95,10 @@ void print_usage(const char* program_name) {
     std::cout << "  echo \"192.168.1.1\" | " << program_name << "        # From stdin\n";
     std::cout << "  cat ip_list.txt | " << program_name << " --enrich-geo  # Pipe list\n";
     std::cout << "  grep \"Failed\" /var/log/auth.log | " << program_name << " --detect-login\n";
-    std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n\n";
+    std::cout << "  " << program_name << " \"/var/log/*.log\"              # Multiple files\n";
+    std::cout << "  " << program_name << " --detect-ddos --detect-bruteforce /var/log/auth.log\n";
+    std::cout << "  " << program_name << " --detect-ddos --threshold 20 --window 1m /var/log/nginx/access.log\n";
+    std::cout << "  " << program_name << " --detect-scan --detect-spray --enrich-geo /var/log/auth.log\n\n";
     std::cout << "Configuration:\n";
     std::cout << "  Config file: ~/.ipdigger/settings.conf\n";
     std::cout << "  Cache dir:   ~/.ipdigger/cache/\n";
@@ -150,6 +161,14 @@ int main(int argc, char* argv[]) {
     ipdigger::TimeRange time_range;  // Default: no filtering
     bool include_no_timestamp = false;
 
+    // Attack pattern detection
+    bool detect_ddos = false;
+    bool detect_spray = false;
+    bool detect_scan = false;
+    bool detect_bruteforce = false;
+    size_t attack_threshold = 10;  // Default threshold
+    std::string attack_window = "5m";  // Default 5 minutes
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -189,6 +208,31 @@ int main(int argc, char* argv[]) {
             no_ipv6 = true;
         } else if (arg == "--detect-login") {
             detect_login = true;
+        } else if (arg == "--detect-ddos") {
+            detect_ddos = true;
+        } else if (arg == "--detect-spray") {
+            detect_spray = true;
+        } else if (arg == "--detect-scan") {
+            detect_scan = true;
+        } else if (arg == "--detect-bruteforce") {
+            detect_bruteforce = true;
+        } else if (arg == "--threshold") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --threshold requires a number argument\n";
+                return 1;
+            }
+            try {
+                attack_threshold = std::stoull(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Error: --threshold requires a valid number\n";
+                return 1;
+            }
+        } else if (arg == "--window") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --window requires a time argument (e.g., 5m, 1h, 30s)\n";
+                return 1;
+            }
+            attack_window = argv[++i];
         } else if (arg == "--top-limit") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --top-limit requires a number argument\n";
@@ -490,6 +534,20 @@ int main(int argc, char* argv[]) {
 
         // Generate statistics (always, for efficient output)
         auto stats = ipdigger::generate_statistics(entries);
+
+        // Detect attack patterns if requested
+        if (detect_ddos || detect_spray || detect_scan || detect_bruteforce) {
+            time_t window_seconds;
+            try {
+                window_seconds = ipdigger::parse_time_window(attack_window);
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Invalid --window value: " << e.what() << "\n";
+                return 1;
+            }
+
+            ipdigger::detect_attack_patterns(stats, detect_ddos, detect_spray, detect_scan, detect_bruteforce,
+                                              attack_threshold, window_seconds, entries);
+        }
 
         // Enrich statistics if requested
         if (enable_geo || enable_rdns || enable_abuseipdb || enable_whois || enable_ping || enable_tls || enable_http) {
