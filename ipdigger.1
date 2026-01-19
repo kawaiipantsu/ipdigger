@@ -1,4 +1,4 @@
-.TH IPDIGGER 1 "2026-01-19" "IPDigger 2.2.0" "User Commands"
+.TH IPDIGGER 1 "2026-01-19" "IPDigger 2.3.0" "User Commands"
 .SH NAME
 ipdigger \- extract and enrich IP addresses from log files
 .SH SYNOPSIS
@@ -14,8 +14,9 @@ ipdigger \- extract and enrich IP addresses from log files
 .SH DESCRIPTION
 .B IPDigger
 is a secure C++ log analysis tool for extracting and enriching IP addresses from log files.
-It supports IPv4 and IPv6 extraction, geolocation, threat intelligence, WHOIS data, reverse DNS,
-TLS/SSL inspection, HTTP detection, login tracking, time-range filtering, and multi-threaded
+It supports IPv4 and IPv6 extraction, geolocation, threat intelligence (AbuseIPDB, THUGSred TI),
+WHOIS data, reverse DNS, TLS/SSL inspection, HTTP detection, login tracking, time-range filtering,
+group-by analysis (ASN/country/org), compressed file support (.gz/.bz2/.xz), and multi-threaded
 parsing for high-performance analysis of large log files.
 .SH OPTIONS
 .SS "Output Formats"
@@ -50,6 +51,20 @@ Enrich IPs with HTTP server data (port, status code, server header, CSP, page ti
 .TP
 .B \-\-follow\-redirects
 Follow HTTP redirects when using \fB\-\-enrich\-http\fR (disabled by default).
+.TP
+.B \-\-enrich\-thugsred\-ti
+Enrich IPs with THUGSred Threat Intelligence lists (VPN exit nodes, malicious IPs, phishing sites).
+Downloads and caches 7 curated lists: CINSBadRep, PeerDrop, NordVPN, Mullvad, PhishTank.
+.SS "Group-By Options"
+.TP
+.B \-\-group\-by\-asn
+Group IPs by Autonomous System Number (auto-enables \fB\-\-enrich\-geo\fR).
+.TP
+.B \-\-group\-by\-country
+Group IPs by country code (auto-enables \fB\-\-enrich\-geo\fR).
+.TP
+.B \-\-group\-by\-org
+Group IPs by organization/ISP name (auto-enables \fB\-\-enrich\-geo\fR).
 .SS "Filtering Options"
 .TP
 .B \-\-no\-private
@@ -143,7 +158,33 @@ Create interactive attack map:
 .TP
 Top 20 non-EU IPs:
 .B ipdigger \-\-geo\-filter\-none\-eu \-\-top\-limit 20 /var/log/auth.log
+.SS "Compressed Files"
+.TP
+Process gzip compressed file:
+.B ipdigger /var/log/nginx/access.log.gz
+.TP
+Process bzip2 compressed file:
+.B ipdigger \-\-top\-limit 10 /var/log/auth.log.bz2
+.TP
+Process XZ compressed file:
+.B ipdigger "/var/log/*.log.xz"
+.SS "Group-By Analysis"
+.TP
+Group by country:
+.B ipdigger \-\-group\-by\-country /var/log/nginx/access.log
+.TP
+Group by ASN (top 10):
+.B ipdigger \-\-group\-by\-asn \-\-top\-limit 10 /var/log/auth.log
+.TP
+Group by organization:
+.B ipdigger \-\-group\-by\-org \-\-output\-json /var/log/nginx/access.log
 .SS "Threat Intelligence"
+.TP
+Check THUGSred TI lists:
+.B ipdigger \-\-enrich\-thugsred\-ti /var/log/auth.log
+.TP
+Combine TI with group-by:
+.B ipdigger \-\-enrich\-thugsred\-ti \-\-group\-by\-country \-\-top\-limit 20 /var/log/nginx/access.log
 .TP
 Check abuse scores:
 .B ipdigger \-\-enrich\-abuseipdb \-\-detect\-login /var/log/auth.log
@@ -153,7 +194,7 @@ Full enrichment for incident response:
 .SS "Time-Range Filtering"
 .TP
 Last 24 hours only:
-.B ipdigger \-\-time\-range ",24hours" /var/log/auth.log
+.B ipdigger \-\-time\-range "24hours," /var/log/auth.log
 .TP
 Specific incident window:
 .B ipdigger \-\-time\-range "2024-01-13 14:30:00,2024-01-13 15:45:00" \-\-detect\-login /var/log/auth.log

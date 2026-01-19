@@ -5,7 +5,7 @@
     |     +      )._______.-'
      `----------'
 
-       IP Digger v2.2.0
+       IP Digger v2.3.0
   Your swiss armyknife tool for IP addresses
 
          by kawaiipantsu
@@ -21,11 +21,12 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 - 📊 **Statistics**: Count, first/last seen per IP
 - 🔎 **Search**: Filter logs by literal strings or regex patterns with hit counts per IP
 - ⏰ **Time-Range Filtering**: Filter entries by timestamp (Unix, ISO 8601, relative times like "24hours")
+- 📊 **Group-By Analysis**: Group IPs by ASN, country, or organization for network-level insights
 - 🌍 **GeoIP**: MaxMind country/city/ASN data with latitude/longitude
 - 🗺️ **Map Visualization**: Export GeoJSON for mapping tools (Leaflet, Mapbox, QGIS)
 - 🔐 **Login Detection**: Track authentication success/failures
 - 🚨 **Attack Detection**: Detect DDoS, password spray, port scanning, and brute force patterns
-- 🛡️ **Threat Intel**: AbuseIPDB abuse scoring & Tor exit node detection
+- 🛡️ **Threat Intel**: AbuseIPDB abuse scoring, Tor exit nodes, and THUGSred TI lists (VPN/threats)
 - 📋 **WHOIS**: Network ownership and abuse contacts
 - 🌐 **Reverse DNS**: Hostname resolution
 - 🏓 **Ping Detection**: Response time measurement and host availability
@@ -41,8 +42,8 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 
 ### Debian/Ubuntu
 ```bash
-wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.2.0/ipdigger_2.2.0_amd64.deb
-sudo dpkg -i ipdigger_2.2.0_amd64.deb
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.3.0/ipdigger_2.3.0_amd64.deb
+sudo dpkg -i ipdigger_2.3.0_amd64.deb
 ```
 
 ### From Source
@@ -96,6 +97,22 @@ ipdigger --enrich-ping --top-limit 10 /var/log/nginx/access.log
 
 # Search for specific patterns
 ipdigger --search "Failed password" /var/log/auth.log
+
+# Compressed files (auto-detected)
+ipdigger /var/log/nginx/access.log.gz
+ipdigger --top-limit 10 /var/log/auth.log.bz2
+
+# Group-by analysis
+ipdigger --group-by-country /var/log/nginx/access.log
+ipdigger --group-by-asn --top-limit 10 /var/log/auth.log
+ipdigger --group-by-org --output-json /var/log/nginx/access.log
+
+# Threat intelligence checking
+ipdigger --enrich-thugsred-ti /var/log/auth.log
+ipdigger --enrich-thugsred-ti --group-by-country --top-limit 20 /var/log/nginx/access.log
+
+# Time range filtering (last 24 hours)
+ipdigger --time-range "24hours," /var/log/auth.log
 
 # Full analysis
 ipdigger --enrich-geo --enrich-whois --enrich-abuseipdb \

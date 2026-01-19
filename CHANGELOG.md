@@ -5,6 +5,87 @@ All notable changes to IPDigger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-01-19
+
+### Added
+- **Compressed File Support**: Automatic detection and processing of compressed log files
+  - Supports gzip (.gz), bzip2 (.bz2), and XZ (.xz) formats
+  - Auto-detection by file extension
+  - Stream-based decompression for memory efficiency
+  - Single-threaded parsing for compressed files (streams don't support seeking)
+  - Progress tracking shows compressed bytes processed
+  - Seamless integration with all existing features and filters
+
+- **Group-By Features**: Group and aggregate IP statistics by network attributes
+  - `--group-by-asn`: Group IPs by Autonomous System Number
+  - `--group-by-country`: Group IPs by country code
+  - `--group-by-org`: Group IPs by organization/ISP name
+  - Auto-enables `--enrich-geo` when group-by is used
+  - Output shows group headers with indented IP details
+  - Supports both table and JSON output formats
+  - Groups sorted by total count (descending)
+
+- **THUGSred Threat Intelligence** (`--enrich-thugsred-ti`): Check IPs against curated threat intelligence lists
+  - Downloads and caches 7 threat intelligence CSV files from blacklist.thugs.red:
+    - CINSBadRep: CINS Army BadRep list (malicious IPs)
+    - PeerDrop: Spamhaus DROP/EDROP list (known threats)
+    - NordVPN_v4/v6: NordVPN exit node lists (IPv4/IPv6)
+    - Mullvad_v4/v6: Mullvad VPN exit node lists (IPv4/IPv6)
+    - PhishTank: PhishTank phishing site list (last 7 days)
+  - Supports both individual IPs and CIDR ranges (IPv4 and IPv6)
+  - Smart caching with configurable TTL (default: 24 hours)
+  - Cache refresh only when lists are older than TTL
+  - Each list has dedicated output field showing "Yes"/"No" match status
+  - Field names automatically derived from list filenames
+  - Unique cache filenames (SHA256 hash) prevent conflicts
+  - Configurable cache TTL via `~/.ipdigger/settings.conf` (`thugsred_ti_cache_hours`)
+
+- **Extended Help System**: Split help into basic and extended versions
+  - `--help`: Concise option list without examples
+  - `--help-extended`: Comprehensive help with examples and documentation
+  - Clear notes about online requirements for enrichment features
+
+### Changed
+- **CLI Interface**: Added `--group-by-asn`, `--group-by-country`, `--group-by-org`, `--enrich-thugsred-ti` flags
+- **Help Text**: Reorganized into `--help` (brief) and `--help-extended` (comprehensive)
+- **Time-Range Examples**: Clarified that `24hours,` means "last 24 hours" (not `,24hours`)
+- **Configuration**: Added `thugsred_ti_cache_hours` setting to control TI list refresh interval
+
+### Fixed
+- **Bzip2 Decompression**: Properly handle BZ_STREAM_END to avoid false errors
+- **Group-by-org**: Correctly uses "org" field from geo enrichment (not "netname" from WHOIS)
+- **ASN Grouping**: Removed duplicate "AS" prefix (enrichment already includes it)
+- **Cache Filename Collisions**: THUGSred TI lists now use unique SHA256-based cache filenames
+- **TI Field Visibility**: All THUGSred TI fields now always show in output (with "No" if not matched)
+
+### Improved
+- **Threat Intelligence**: Comprehensive VPN and threat detection with minimal API dependencies
+- **Network Analysis**: Group-by features enable rapid network-level threat assessment
+- **Large File Performance**: Compressed file support reduces disk I/O and storage requirements
+- **User Experience**: Extended help provides detailed guidance without cluttering basic help
+- **Documentation**: Clear warnings about enrichment features requiring network access
+
+### Examples
+```bash
+# Compressed file processing
+ipdigger /var/log/nginx/access.log.gz
+ipdigger --top-limit 10 /var/log/auth.log.bz2
+ipdigger "/var/log/*.log.xz"
+
+# Group-by analysis
+ipdigger --group-by-country /var/log/nginx/access.log
+ipdigger --group-by-asn --top-limit 10 /var/log/auth.log
+ipdigger --group-by-org --output-json /var/log/nginx/access.log
+
+# Threat intelligence checking
+ipdigger --enrich-thugsred-ti /var/log/auth.log
+ipdigger --enrich-thugsred-ti --group-by-country --top-limit 20 /var/log/nginx/access.log
+ipdigger --time-range "24hours," --enrich-thugsred-ti /var/log/auth.log
+
+# Combined analysis (compressed + TI + grouping)
+ipdigger --group-by-asn --enrich-thugsred-ti --no-private /var/log/auth.log.gz
+```
+
 ## [2.2.0] - 2026-01-19
 
 ### Added
