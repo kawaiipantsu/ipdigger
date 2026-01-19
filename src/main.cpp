@@ -107,6 +107,15 @@ void print_extended_help(const char* program_name) {
     std::cout << "  " << program_name << " --top-limit 20 /var/log/auth.log\n";
     std::cout << "  " << program_name << " --limit 100 /var/log/auth.log\n\n";
     std::cout << "Enrichment Examples:\n";
+    std::cout << "  NOTE: Some enrichment features require online access to function:\n";
+    std::cout << "    - --enrich-abuseipdb (requires API key and internet)\n";
+    std::cout << "    - --enrich-thugsred-ti (downloads threat intelligence lists)\n";
+    std::cout << "    - --enrich-rdns (performs reverse DNS lookups)\n";
+    std::cout << "    - --enrich-whois (performs WHOIS queries)\n";
+    std::cout << "    - --enrich-ping (sends ICMP packets to target IPs)\n";
+    std::cout << "    - --enrich-tls (connects to HTTPS port 443)\n";
+    std::cout << "    - --enrich-http (connects to HTTP ports 80/443)\n";
+    std::cout << "    - --enrich-geo (local MaxMind DB, may auto-download if configured)\n\n";
     std::cout << "  " << program_name << " --enrich-geo /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-rdns /var/log/auth.log\n";
     std::cout << "  " << program_name << " --enrich-abuseipdb /var/log/auth.log\n";
