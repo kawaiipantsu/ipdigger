@@ -5,7 +5,7 @@
     |     +      )._______.-'
      `----------'
 
-       IP Digger v2.3.0
+       IP Digger v3.0.0
   Your swiss armyknife tool for IP addresses
 
          by kawaiipantsu
@@ -42,9 +42,21 @@ A secure C++ log analysis tool for extracting and enriching IP addresses from lo
 ## Installation
 
 ### Debian/Ubuntu
+
+**Multi-Architecture Support**: IPDigger v3.0.0 provides packages for three architectures:
+
 ```bash
-wget https://github.com/kawaiipantsu/ipdigger/releases/download/v2.3.0/ipdigger_2.3.0_amd64.deb
-sudo dpkg -i ipdigger_2.3.0_amd64.deb
+# AMD/Intel 64-bit (most common - desktops, servers, cloud)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_amd64.deb
+sudo dpkg -i ipdigger_3.0.0_amd64.deb
+
+# ARM 64-bit (Raspberry Pi 3/4/5, AWS Graviton, Apple Silicon via Linux VM)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_arm64.deb
+sudo dpkg -i ipdigger_3.0.0_arm64.deb
+
+# Intel 32-bit (legacy systems)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_i386.deb
+sudo dpkg -i ipdigger_3.0.0_i386.deb
 ```
 
 ### From Source

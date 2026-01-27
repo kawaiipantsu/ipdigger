@@ -5,6 +5,79 @@ All notable changes to IPDigger will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-01-27
+
+### Added
+- **Multi-Architecture Debian Packages**: Official support for three CPU architectures
+  - `ipdigger_3.0.0_amd64.deb`: AMD/Intel 64-bit (x86-64)
+  - `ipdigger_3.0.0_arm64.deb`: ARM 64-bit (aarch64) - Raspberry Pi 3/4/5, AWS Graviton, Apple Silicon (via Linux VM)
+  - `ipdigger_3.0.0_i386.deb`: Intel 32-bit (x86) - Legacy systems
+  - All packages are dynamically linked and stripped for optimal size (~200-250KB)
+  - Cross-compilation infrastructure using GCC cross-compilers
+
+- **New Makefile Targets**:
+  - `make deb-amd64`: Build AMD/Intel 64-bit package
+  - `make deb-arm64`: Build ARM 64-bit package
+  - `make deb-i386`: Build Intel 32-bit package
+  - `make deb-all`: Build all three architectures in one command
+
+### Changed
+- **Architecture-Aware Security Hardening**: Intel CET (Control-flow Enforcement Technology) protection flag (`-fcf-protection`) now excluded on ARM64 (architecture-specific flag)
+- **Makefile Architecture Variables**: Introduced `ARCH` variable for cross-compilation control (default: amd64)
+- **Binary Stripping**: All architectures now use architecture-specific strip tools for minimal binary size
+- **Package Naming**: Debian packages now use dynamic architecture variable `$(DEB_ARCH)` instead of hardcoded "amd64"
+
+### Technical Details
+- **Cross-Compilation Setup**:
+  - ARM64: `aarch64-linux-gnu-g++` compiler
+  - i386: `i686-linux-gnu-g++` compiler with `-m32` flag
+  - Dynamic linking for all architectures (simpler dependency management, smaller packages)
+
+- **Build System Improvements**:
+  - Architecture-specific clean operations preserve .deb files during multi-arch builds
+  - Proper dependency management for cross-compiled binaries
+  - Updated help text to show all architecture-specific targets
+
+- **Security Maintained Across Architectures**:
+  - All architectures: Stack protection, PIE, format security, fortify source, stack clash protection
+  - x86/x64 only: Intel CET control-flow protection
+  - Full RELRO, non-executable stack, and position-independent executables for all platforms
+
+### Installation
+Choose the appropriate package for your architecture:
+
+```bash
+# AMD/Intel 64-bit (most common)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_amd64.deb
+sudo dpkg -i ipdigger_3.0.0_amd64.deb
+
+# ARM 64-bit (Raspberry Pi, AWS Graviton, etc.)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_arm64.deb
+sudo dpkg -i ipdigger_3.0.0_arm64.deb
+
+# Intel 32-bit (legacy systems)
+wget https://github.com/kawaiipantsu/ipdigger/releases/download/v3.0.0/ipdigger_3.0.0_i386.deb
+sudo dpkg -i ipdigger_3.0.0_i386.deb
+```
+
+### Building from Source
+```bash
+# Build for native architecture
+make deb
+
+# Build for specific architecture (requires cross-compiler)
+make deb-arm64
+
+# Build all architectures
+make deb-all
+```
+
+### Breaking Changes
+None. This release is fully backward compatible. The version bump to 3.0.0 reflects the significant expansion of platform support.
+
+### Upgrading from 2.4.0
+No breaking changes. Simply install the new package for your architecture. All features and flags continue to work as expected.
+
 ## [2.4.0] - 2026-01-19
 
 ### Added

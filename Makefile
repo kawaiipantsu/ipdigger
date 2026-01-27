@@ -1,13 +1,29 @@
 # Makefile for C++ project with security hardening and Debian packaging
 # Project configuration
 PROJECT_NAME    := ipdigger
-VERSION         := 2.4.0
+VERSION         := 3.0.0
 PREFIX          := /usr/local
 BINDIR          := $(PREFIX)/bin
 MANDIR          := $(PREFIX)/share/man/man1
 
+# Architecture configuration
+ARCH            ?= amd64
+DEB_ARCH        := $(ARCH)
+
+# Architecture-specific compiler mapping
+ifeq ($(ARCH),arm64)
+    CXX         := aarch64-linux-gnu-g++
+    PKG_CONFIG_PATH := /usr/lib/aarch64-linux-gnu/pkgconfig
+else ifeq ($(ARCH),i386)
+    CXX         := i686-linux-gnu-g++
+    PKG_CONFIG_PATH := /usr/lib/i386-linux-gnu/pkgconfig
+else
+    # amd64 - native build (default)
+    CXX         := g++
+endif
+
 # Compiler and flags
-CXX             := g++
+# Note: CXX may be overridden above for cross-compilation
 CXXFLAGS        := -std=c++17 -Wall -Wextra -Wpedantic -Werror
 CXXFLAGS        += -O2 -g
 
@@ -18,11 +34,24 @@ CXXFLAGS        += -fPIE
 CXXFLAGS        += -Wformat -Wformat-security
 CXXFLAGS        += -fno-strict-overflow
 CXXFLAGS        += -fstack-clash-protection
-CXXFLAGS        += -fcf-protection
 
-LDFLAGS         := -pie -Wl,-z,relro,-z,now,-z,noexecstack
-LDFLAGS         += -Wl,--as-needed
-LDFLAGS         += -lcurl -lssl -lcrypto -lmaxminddb -lz -lbz2 -llzma
+# Intel CET (Control-flow Enforcement Technology) - x86/x64 only
+ifneq ($(ARCH),arm64)
+    CXXFLAGS    += -fcf-protection
+endif
+
+# Linker flags (dynamic linking for all architectures)
+ifeq ($(ARCH),i386)
+    LDFLAGS     := -pie -m32 -Wl,-z,relro,-z,now,-z,noexecstack
+    LDFLAGS     += -Wl,--as-needed
+    LDFLAGS     += -lcurl -lssl -lcrypto -lmaxminddb -lz -lbz2 -llzma
+    CXXFLAGS    += -m32
+else
+    # amd64 and arm64 - dynamic linking
+    LDFLAGS     := -pie -Wl,-z,relro,-z,now,-z,noexecstack
+    LDFLAGS     += -Wl,--as-needed
+    LDFLAGS     += -lcurl -lssl -lcrypto -lmaxminddb -lz -lbz2 -llzma
+endif
 
 # Directories
 SRCDIR          := src
@@ -45,7 +74,7 @@ TEST_OBJECTS    := $(TEST_SOURCES:$(TESTDIR)/%.cpp=$(OBJDIR)/test_%.o)
 TEST_TARGET     := $(BINDIR_LOCAL)/test_$(PROJECT_NAME)
 
 # Debian package
-DEB_PACKAGE     := $(PROJECT_NAME)_$(VERSION)_amd64.deb
+DEB_PACKAGE     := $(PROJECT_NAME)_$(VERSION)_$(DEB_ARCH).deb
 INSTALL_ROOT    := $(DEBDIR)/$(PROJECT_NAME)
 
 # Colors for output
@@ -70,7 +99,11 @@ help:
 	@echo "  $(GREEN)make test$(RESET)             - Build and run tests"
 	@echo "  $(GREEN)make install$(RESET)          - Install to $(PREFIX)"
 	@echo "  $(GREEN)make uninstall$(RESET)        - Remove installed files"
-	@echo "  $(GREEN)make deb$(RESET)              - Create Debian package"
+	@echo "  $(GREEN)make deb$(RESET)              - Create Debian package (current arch: $(ARCH))"
+	@echo "  $(GREEN)make deb-amd64$(RESET)        - Create Debian package (AMD/Intel 64-bit)"
+	@echo "  $(GREEN)make deb-arm64$(RESET)        - Create Debian package (ARM 64-bit)"
+	@echo "  $(GREEN)make deb-i386$(RESET)         - Create Debian package (Intel 32-bit)"
+	@echo "  $(GREEN)make deb-all$(RESET)          - Create packages for all architectures"
 	@echo "  $(GREEN)make clean$(RESET)            - Remove build artifacts"
 	@echo "  $(GREEN)make help$(RESET)             - Show this help message"
 	@echo ""
@@ -157,7 +190,20 @@ deb: all
 	@mkdir -p $(INSTALL_ROOT)$(BINDIR)
 	@mkdir -p $(INSTALL_ROOT)$(MANDIR)
 	@mkdir -p $(INSTALL_ROOT)/DEBIAN
-	@install -m 755 $(TARGET) $(INSTALL_ROOT)$(BINDIR)/$(PROJECT_NAME)
+	@echo "$(YELLOW)Stripping binary...$(RESET)"
+ifeq ($(ARCH),arm64)
+	@aarch64-linux-gnu-strip $(TARGET) -o $(TARGET).stripped
+	@install -m 755 $(TARGET).stripped $(INSTALL_ROOT)$(BINDIR)/$(PROJECT_NAME)
+	@rm -f $(TARGET).stripped
+else ifeq ($(ARCH),i386)
+	@i686-linux-gnu-strip $(TARGET) -o $(TARGET).stripped
+	@install -m 755 $(TARGET).stripped $(INSTALL_ROOT)$(BINDIR)/$(PROJECT_NAME)
+	@rm -f $(TARGET).stripped
+else
+	@strip $(TARGET) -o $(TARGET).stripped
+	@install -m 755 $(TARGET).stripped $(INSTALL_ROOT)$(BINDIR)/$(PROJECT_NAME)
+	@rm -f $(TARGET).stripped
+endif
 	@if [ -f $(PROJECT_NAME).1 ]; then \
 		gzip -c $(PROJECT_NAME).1 > $(INSTALL_ROOT)$(MANDIR)/$(PROJECT_NAME).1.gz; \
 	fi
@@ -165,7 +211,7 @@ deb: all
 	@echo "Version: $(VERSION)" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Section: utils" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Priority: optional" >> $(INSTALL_ROOT)/DEBIAN/control
-	@echo "Architecture: amd64" >> $(INSTALL_ROOT)/DEBIAN/control
+	@echo "Architecture: $(DEB_ARCH)" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Maintainer: Kawaiipantsu <thugsred@protonmail.com>" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Homepage: https://github.com/kawaiipantsu/ipdigger" >> $(INSTALL_ROOT)/DEBIAN/control
 	@echo "Description: $(PROJECT_NAME) - IP address analysis tool" >> $(INSTALL_ROOT)/DEBIAN/control
@@ -175,6 +221,28 @@ deb: all
 	@echo " parsing for high-performance analysis of large log files." >> $(INSTALL_ROOT)/DEBIAN/control
 	@dpkg-deb --build $(INSTALL_ROOT) $(DEB_PACKAGE)
 	@echo "$(GREEN)✓ Created $(DEB_PACKAGE)$(RESET)"
+
+# Multi-architecture targets
+.PHONY: deb-amd64 deb-arm64 deb-i386 deb-all
+
+deb-amd64:
+	@echo "$(YELLOW)Building amd64 package...$(RESET)"
+	@rm -rf $(OBJDIR) $(BINDIR_LOCAL) $(DEBDIR)
+	$(MAKE) ARCH=amd64 deb
+
+deb-arm64:
+	@echo "$(YELLOW)Building arm64 package...$(RESET)"
+	@rm -rf $(OBJDIR) $(BINDIR_LOCAL) $(DEBDIR)
+	$(MAKE) ARCH=arm64 deb
+
+deb-i386:
+	@echo "$(YELLOW)Building i386 package...$(RESET)"
+	@rm -rf $(OBJDIR) $(BINDIR_LOCAL) $(DEBDIR)
+	$(MAKE) ARCH=i386 deb
+
+deb-all: deb-amd64 deb-arm64 deb-i386
+	@echo "$(GREEN)✓ Built packages for all architectures$(RESET)"
+	@ls -lh *.deb
 
 # Clean target
 clean:
